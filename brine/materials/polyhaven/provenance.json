@@ -1,0 +1,83 @@
+{
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "retrieved": "2026-09-05",
+  "assets": [
+    {
+      "id": "smooth_concrete_floor",
+      "role": "floor",
+      "source": "https://polyhaven.com/a/smooth_concrete_floor",
+      "authors": {
+        "Dimitrios Savva": "All"
+      },
+      "dimensions_mm": [
+        2000,
+        2000
+      ],
+      "files": [
+        {
+          "channel": "Diffuse",
+          "file": "smooth_concrete_floor_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/smooth_concrete_floor/smooth_concrete_floor_diff_2k.jpg",
+          "bytes": 3561275,
+          "sha256": "19fecf502443f53f5e94b67569461dc571f1de60d3676f925b74b78b398f4897",
+          "provider_md5": "3b9f88588c6fec0110f7e112163a8986"
+        },
+        {
+          "channel": "nor_gl",
+          "file": "smooth_concrete_floor_nor_gl_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/smooth_concrete_floor/smooth_concrete_floor_nor_gl_2k.jpg",
+          "bytes": 2819837,
+          "sha256": "0f698e2f3ca8f1b74c79765c8d51489772af05c969715d326490eafb1e92ae79",
+          "provider_md5": "94895c9460504dc4e4a3275e9eb84aee"
+        },
+        {
+          "channel": "Rough",
+          "file": "smooth_concrete_floor_rough_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/smooth_concrete_floor/smooth_concrete_floor_rough_2k.jpg",
+          "bytes": 2181493,
+          "sha256": "6d21666ada82093a437b87d5ba32361792f26016ad4e5978487488c3e61ca54a",
+          "provider_md5": "de59a5a792ba784d4dbeb9cb2044ee2b"
+        }
+      ]
+    },
+    {
+      "id": "concrete",
+      "role": "wall",
+      "source": "https://polyhaven.com/a/concrete",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "dimensions_mm": [
+        4000,
+        4000
+      ],
+      "files": [
+        {
+          "channel": "Diffuse",
+          "file": "concrete_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete/concrete_diff_2k.jpg",
+          "bytes": 2265804,
+          "sha256": "92a0b37c2f64630ba776b514f3276ecbb98cd59a23dea2c7b83b3c63bc3e4f7a",
+          "provider_md5": "8ddd1a273bbde0e4095cba8647c79b96"
+        },
+        {
+          "channel": "nor_gl",
+          "file": "concrete_nor_gl_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete/concrete_nor_gl_2k.jpg",
+          "bytes": 589619,
+          "sha256": "74bd74e02c00565c84d89f6a73fe672ba4fe254c5b43d83eaca0eb7be5159265",
+          "provider_md5": "73f9112331204512b2612792367f506a"
+        },
+        {
+          "channel": "Rough",
+          "file": "concrete_rough_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete/concrete_rough_2k.jpg",
+          "bytes": 961406,
+          "sha256": "d58060aa195ffd5fc90fc2468491f9e6fd8a8d374362605d8cfe7ddeabcdc84c",
+          "provider_md5": "69b8f7a10c68946248fcc48e3e046e58"
+        }
+      ]
+    }
+  ]
+}
