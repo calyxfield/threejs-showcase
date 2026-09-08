@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#192c24">
+  <title>Woodland · World foundation</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="panel">
+    <header><div class="eyebrow"><span class="mark" aria-hidden="true"></span> WORLD FOUNDATION / 01</div><h1>Woodland</h1><p>A seed. A clearing. <br>Room to build.</p></header>
+    <form id="settings">
+      <div class="section-title">GENERATE YOUR WORLD</div>
+      <label for="seed">World seed</label>
+      <input id="seed" name="seed" value="woodland-01" maxlength="80" spellcheck="false" autocomplete="off">
+      <p class="hint">Same seed and settings, same woodland.</p>
+      <div class="range-title"><label for="scale">Patch size</label><output id="scale-value" for="scale">48 m</output></div>
+      <input id="scale" name="scale" type="range" min="8" max="160" step="1" value="48">
+      <p class="hint">Perlin noise scale. Larger patches make broader groves and clearings.</p>
+      <div class="range-title"><label for="detail">Noise detail</label><output id="detail-value" for="detail">3 layers</output></div>
+      <input id="detail" name="detail" type="range" min="1" max="5" step="1" value="3">
+      <p class="hint">More layers add smaller variations along the forest edges.</p>
+      <div class="range-title"><label for="density">Tree amount</label><output id="density-value" for="density">38 / 100</output></div>
+      <input id="density" name="density" type="range" min="0" max="100" step="1" value="38">
+      <p class="hint">Adds trees within groves. Zero leaves open grass.</p>
+      <button class="primary" type="submit">Regenerate world <span aria-hidden="true">→</span></button>
+      <button id="new-seed" class="secondary" type="button">Explore a new seed</button>
+      <p id="apply-state" role="status">World ready. Take a walk.</p>
+    </form>
+    <footer><span class="biome-dot"></span> ONE BIOME · GRASS & WOODLAND</footer>
+  </aside>
+  <main id="viewport">
+    <canvas id="world" tabindex="0" aria-label="Top-down woodland. Walk with W A S D or arrow keys. Hold Shift to run. Zoom with the mouse wheel or the plus and minus buttons."></canvas>
+    <div class="map-top"><div class="position"><span class="live-dot"></span><span id="position">X 0 · Y 0</span><small>METRES</small></div><span class="north">N ↑</span></div>
+    <div class="map-bottom"><div class="legend"><span class="player-key"></span> YOU <span class="divider"></span><span id="scale-label">1 SQUARE = 1 m</span><div class="scale-line" id="scale-line"></div><small id="scale-distance">5 m</small></div><div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><span id="zoom-label">100%</span><button id="zoom-in" aria-label="Zoom in">+</button></div></div>
+    <div class="controls"><span><kbd>W A S D</kbd> / <kbd>↑ ← ↓ →</kbd> walk</span><span><kbd>SHIFT</kbd> run</span><span>Scroll to zoom</span></div>
+    <div class="touch-pad" aria-label="Touch movement"><button data-dir="up" aria-label="Walk north">↑</button><button data-dir="left" aria-label="Walk west">←</button><button data-dir="down" aria-label="Walk south">↓</button><button data-dir="right" aria-label="Walk east">→</button></div>
+    <details class="world-info"><summary>World info</summary><div id="world-stats"></div><p>Terrain streams in 32 × 32 m chunks. Only the visible area is drawn.</p></details>
+  </main>
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>
