@@ -45,13 +45,23 @@
   </section>
   <main id="viewport" hidden>
     <canvas id="world" tabindex="0" aria-label="Top-down world map. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or the plus and minus buttons."></canvas>
-    <div class="map-top"><div class="map-heading"><button id="save-menu" class="map-button">Save & Menu</button><span id="world-title"></span></div><div class="position"><small>CAMERA</small><span id="position">X 0 · Y 0</span><small>METRES</small></div><span class="north">N ↑</span></div>
-    <div id="save-status" role="status"></div>
-    <section id="build-panel" hidden><h2 id="build-title"></h2><p id="build-help"></p><div class="build-actions"><button id="confirm-build">Land here</button><button id="start-build">Build</button><button id="start-cut">Cut Trees</button><button id="cancel-build" class="quiet">Cancel</button><button id="view-ship" class="quiet">Go to ship</button></div><p id="build-status" role="status"></p></section>
-    <div class="map-bottom"><div class="legend"><span id="scale-label">1 SQUARE = 1 m</span><span id="view-span"></span><div class="scale-line" id="scale-line"></div><small id="scale-distance">5 m</small></div><div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Return to one-metre detail">1:1</button><button id="zoom-in" aria-label="Zoom in">+</button></div></div>
+    <header class="toolbar" aria-label="Map tools">
+      <div class="toolbar-main">
+        <div class="map-heading"><button id="save-menu" class="map-button">Save & Menu</button><span id="world-title"></span></div>
+        <div id="ship-tools" class="build-actions"><button id="start-build">Build</button><button id="start-cut">Cut Trees</button><button id="view-ship" class="quiet">Go to ship</button></div>
+        <details id="view-tools" class="view-tools" open><summary>View</summary><div class="view-actions">
+          <div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Return to one-metre detail">1:1</button><button id="zoom-in" aria-label="Zoom in">+</button></div>
+          <details class="world-info"><summary>World info</summary><div class="info-content"><div id="world-stats"></div><p>The close view shows individual trees. Distant views show approximate forest cover.</p></div></details>
+          <details class="pan-tools"><summary>Pan</summary><div class="touch-pad" aria-label="Camera controls"><button data-dir="up" aria-label="Pan north">↑</button><button data-dir="left" aria-label="Pan west">←</button><button data-dir="down" aria-label="Pan south">↓</button><button data-dir="right" aria-label="Pan east">→</button></div></details>
+        </div></details>
+      </div>
+      <div class="toolbar-lower">
+        <section id="build-panel" hidden><div class="context-copy"><h2 id="build-title"></h2><p id="build-help"></p></div><div class="build-actions"><button id="confirm-build">Land here</button><button id="cancel-build" class="quiet">Cancel</button></div><p id="build-status" role="status"></p></section>
+        <div class="map-meta"><div class="position"><span id="position">X 0 · Y 0</span><small>m · N ↑</small></div><div id="save-status" role="status"></div></div>
+      </div>
+    </header>
+    <div class="map-bottom"><div class="legend"><span id="scale-label">1 SQUARE = 1 m</span><span id="view-span"></span><div class="scale-line" id="scale-line"></div><small id="scale-distance">5 m</small></div></div>
     <div class="controls"><span>Drag to pan</span><span><kbd>W A S D</kbd> / arrows pan</span><span>Scroll to zoom</span></div>
-    <div class="touch-pad" aria-label="Camera controls"><button data-dir="up" aria-label="Pan north">↑</button><button data-dir="left" aria-label="Pan west">←</button><button data-dir="down" aria-label="Pan south">↓</button><button data-dir="right" aria-label="Pan east">→</button></div>
-    <details class="world-info"><summary>World info</summary><div id="world-stats"></div><p>The close view shows individual trees. Distant views show approximate forest cover.</p></details>
   </main>
   <script type="module" src="app.mjs"></script>
 </body>

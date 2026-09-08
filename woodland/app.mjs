@@ -135,6 +135,9 @@ $('zoom-out').addEventListener('click', () => setZoom(zoom / 2));
 $('zoom-reset').addEventListener('click', () => setZoom(30));
 canvas.addEventListener('wheel', event => { event.preventDefault(); setZoom(zoom * Math.exp(-event.deltaY * 0.0015)); }, { passive: false });
 new ResizeObserver(resize).observe(canvas);
+const compactToolbar = matchMedia('(max-width: 700px)');
+function sizeToolbar() { $('view-tools').open = !compactToolbar.matches; }
+compactToolbar.addEventListener('change', sizeToolbar); sizeToolbar();
 canvas.addEventListener('pointerdown', event => {
   if (screen !== 'viewport' || event.button !== 0 || drag) return;
   event.preventDefault();
@@ -250,6 +253,8 @@ function updateBuildUI() {
   canvas.setAttribute('aria-label', cutting ? 'Top-down world map. Tap a tree or drag to select trees, then confirm the order. W A S D or arrow keys pan. Escape cancels selection.' : 'Top-down world map. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or plus and minus buttons.');
   const game = world?.construction;
   $('build-panel').hidden = !game;
+  $('ship-tools').hidden = !game?.ship;
+  $('build-panel').classList.toggle('context-active', !!game && (!game.ship || !!placement || cutting));
   if (!game) return;
   const landing = !game.ship, rect = landing ? {...game.pending,...SHIP} : placement ? {...placement,...BUILDING} : null;
   const valid = rect && canPlace(game,rect) && zoom >= 4;
