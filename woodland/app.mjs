@@ -5,7 +5,7 @@ const canvas = $('world'), ctx = canvas.getContext('2d', { alpha: false });
 const form = $('settings');
 const RASTER_TILE = 16, RASTER_LIMIT = 64;
 const rasters = new Map(), keys = new Set();
-let world, player, width = 1, height = 1, zoom = 30, last = 0, facing = 0;
+let world, camera, width = 1, height = 1, zoom = 30, last = 0, drag = null;
 let visibleChunks = 0, frameCount = 0, frameMs = 0, statsAt = 0;
 let renderedStateRevision = 0;
 const grass = ['#9aa570','#929f68','#8b9a62','#84955d','#7d9058','#768b54','#718550','#6a804c'];
@@ -25,10 +25,10 @@ function releaseRasters() {
 }
 function regenerate() {
   world = new World(settings());
-  player = world.spawn();
+  camera = { x: 0, y: 0 };
   renderedStateRevision = world.state.revision;
-  releaseRasters(); keys.clear();
-  $('apply-state').textContent = 'World ready. Take a walk.';
+  releaseRasters(); keys.clear(); stopDrag();
+  $('apply-state').textContent = 'World ready. Drag to explore.';
   updateStats();
   canvas.focus({ preventScroll: true });
 }
@@ -60,15 +60,36 @@ $('zoom-in').addEventListener('click', () => setZoom(zoom * 1.25));
 $('zoom-out').addEventListener('click', () => setZoom(zoom / 1.25));
 canvas.addEventListener('wheel', event => { event.preventDefault(); setZoom(zoom * Math.exp(-event.deltaY * 0.0015)); }, { passive: false });
 new ResizeObserver(resize).observe(canvas);
-canvas.addEventListener('pointerdown', () => canvas.focus({ preventScroll: true }));
-const movementKeys = new Set(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright','shift']);
+canvas.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || drag) return;
+  event.preventDefault();
+  canvas.focus({ preventScroll: true });
+  canvas.setPointerCapture(event.pointerId);
+  drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  canvas.classList.add('dragging');
+});
+canvas.addEventListener('pointermove', event => {
+  if (!drag || event.pointerId !== drag.id) return;
+  camera.x -= (event.clientX - drag.x) / zoom;
+  camera.y -= (event.clientY - drag.y) / zoom;
+  drag.x = event.clientX; drag.y = event.clientY;
+});
+function stopDrag() {
+  if (drag && canvas.hasPointerCapture(drag.id)) canvas.releasePointerCapture(drag.id);
+  drag = null; canvas.classList.remove('dragging');
+}
+for (const type of ['pointerup','pointercancel','lostpointercapture']) canvas.addEventListener(type, event => {
+  if (drag && event.pointerId === drag.id) stopDrag();
+});
+const movementKeys = new Set(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright']);
 window.addEventListener('keydown', event => {
   if (event.target.matches('input, textarea') || !movementKeys.has(event.key.toLowerCase())) return;
   event.preventDefault(); keys.add(event.key.toLowerCase());
 });
 window.addEventListener('keyup', event => keys.delete(event.key.toLowerCase()));
-window.addEventListener('blur', () => keys.clear());
-document.addEventListener('visibilitychange', () => { keys.clear(); last = 0; });
+window.addEventListener('blur', () => { keys.clear(); stopDrag(); });
+document.addEventListener('visibilitychange', () => { keys.clear(); stopDrag(); last = 0; });
+form.addEventListener('focusin', () => keys.clear());
 const touchKeys = {up:'arrowup',left:'arrowleft',down:'arrowdown',right:'arrowright'};
 for (const button of document.querySelectorAll('[data-dir]')) {
   button.addEventListener('pointerdown', event => {
@@ -111,27 +132,12 @@ function rasterChunk(cx, cy) {
   return raster;
 }
 
-function clearAt(x, y) {
-  const radius = 0.34; // Player radius 0.18 m + trunk radius 0.16 m.
-  for (let ty = Math.floor(y-radius); ty <= Math.floor(y+radius); ty++) {
-    for (let tx = Math.floor(x-radius); tx <= Math.floor(x+radius); tx++) {
-      if (world.isTree(tx,ty) && Math.hypot(x-tx-0.5,y-ty-0.5) < radius) return false;
-    }
-  }
-  return true;
-}
-function move(dt) {
-  let dx = Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft'));
-  let dy = Number(keys.has('s') || keys.has('arrowdown')) - Number(keys.has('w') || keys.has('arrowup'));
+function pan(dt) {
+  const dx = Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft'));
+  const dy = Number(keys.has('s') || keys.has('arrowdown')) - Number(keys.has('w') || keys.has('arrowup'));
   if (!dx && !dy) return;
-  facing = Math.atan2(dy,dx);
-  const distance = (keys.has('shift') ? 7 : 3.5) * dt / Math.hypot(dx,dy);
-  dx *= distance; dy *= distance;
-  const steps = Math.ceil(Math.hypot(dx,dy) / 0.1);
-  for (let i = 0; i < steps; i++) {
-    if (clearAt(player.x+dx/steps, player.y)) player.x += dx/steps;
-    if (clearAt(player.x, player.y+dy/steps)) player.y += dy/steps;
-  }
+  const distance = 480 / zoom * dt / Math.hypot(dx,dy);
+  camera.x += dx * distance; camera.y += dy * distance;
 }
 function updateStats() {
   $('world-stats').textContent = `Seed: ${world.settings.seed}\n${world.chunks.size} / ${world.cacheLimit} data chunks\n${rasters.size} / ${RASTER_LIMIT} map images\n${visibleChunks} visible chunks`;
@@ -143,8 +149,8 @@ function draw(now) {
     releaseRasters(); renderedStateRevision = world.state.revision;
   }
   const dt = last ? Math.min((now-last)/1000, 0.05) : 0; last = now;
-  move(dt);
-  const left = player.x - width / zoom / 2, top = player.y - height / zoom / 2;
+  pan(dt);
+  const left = camera.x - width / zoom / 2, top = camera.y - height / zoom / 2;
   const right = left + width / zoom, bottom = top + height / zoom;
   visibleChunks = 0;
   for (let cy = Math.floor(top/CHUNK_SIZE); cy <= Math.floor(bottom/CHUNK_SIZE); cy++) {
@@ -164,20 +170,15 @@ function draw(now) {
   for(let x=Math.ceil(left/8)*8;x<=right;x+=8){const sx=Math.round((x-left)*zoom)+.5;ctx.moveTo(sx,0);ctx.lineTo(sx,height);}
   for(let y=Math.ceil(top/8)*8;y<=bottom;y+=8){const sy=Math.round((y-top)*zoom)+.5;ctx.moveTo(0,sy);ctx.lineTo(width,sy);}
   ctx.stroke();
-  const px = width/2, py = height/2, r = Math.max(4,zoom*.23);
-  ctx.fillStyle='#16372844';ctx.beginPath();ctx.ellipse(px+2,py+3,r+3,r+1,0,0,Math.PI*2);ctx.fill();
-  ctx.strokeStyle='#f3e6b098';ctx.lineWidth=1;ctx.beginPath();ctx.arc(px,py,r+5,0,Math.PI*2);ctx.stroke();
-  ctx.save();ctx.translate(px,py);ctx.rotate(facing);ctx.fillStyle='#253d35';ctx.beginPath();ctx.ellipse(0,0,r*.8,r*1.1,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#e6bd74';ctx.beginPath();ctx.arc(r*.2,0,r*.7,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff0bb';ctx.fillRect(r*.7,-1.5,3,3);ctx.restore();
   frameCount++; frameMs += performance.now()-start;
-  if(now-statsAt>250){$('position').textContent=`X ${Math.floor(player.x)} · Y ${Math.floor(player.y)}`;updateStats();statsAt=now;}
+  if(now-statsAt>250){$('position').textContent=`X ${Math.floor(camera.x)} · Y ${Math.floor(camera.y)}`;updateStats();statsAt=now;}
   requestAnimationFrame(draw);
 }
 
 // Read-only diagnostics for reproducible, bounded verification.
 window.woodland = Object.freeze({
   get settings(){return {...world.settings};},
-  get position(){return {...player};},
+  get camera(){return {...camera};},
   get metrics(){return {frames:frameCount,meanWorkMs:frameMs/Math.max(1,frameCount),dataChunks:world.chunks.size,rasterChunks:rasters.size,visibleChunks,zoom};},
   tile:(x,y)=>world.tile(x,y),
 });

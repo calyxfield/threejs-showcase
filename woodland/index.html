@@ -26,16 +26,16 @@
       <p class="hint">Adds trees within groves. Zero leaves open grass.</p>
       <button class="primary" type="submit">Regenerate world <span aria-hidden="true">→</span></button>
       <button id="new-seed" class="secondary" type="button">Explore a new seed</button>
-      <p id="apply-state" role="status">World ready. Take a walk.</p>
+      <p id="apply-state" role="status">World ready. Drag to explore.</p>
     </form>
     <footer><span class="biome-dot"></span> ONE BIOME · GRASS & WOODLAND</footer>
   </aside>
   <main id="viewport">
-    <canvas id="world" tabindex="0" aria-label="Top-down woodland. Walk with W A S D or arrow keys. Hold Shift to run. Zoom with the mouse wheel or the plus and minus buttons."></canvas>
-    <div class="map-top"><div class="position"><span class="live-dot"></span><span id="position">X 0 · Y 0</span><small>METRES</small></div><span class="north">N ↑</span></div>
-    <div class="map-bottom"><div class="legend"><span class="player-key"></span> YOU <span class="divider"></span><span id="scale-label">1 SQUARE = 1 m</span><div class="scale-line" id="scale-line"></div><small id="scale-distance">5 m</small></div><div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><span id="zoom-label">100%</span><button id="zoom-in" aria-label="Zoom in">+</button></div></div>
-    <div class="controls"><span><kbd>W A S D</kbd> / <kbd>↑ ← ↓ →</kbd> walk</span><span><kbd>SHIFT</kbd> run</span><span>Scroll to zoom</span></div>
-    <div class="touch-pad" aria-label="Touch movement"><button data-dir="up" aria-label="Walk north">↑</button><button data-dir="left" aria-label="Walk west">←</button><button data-dir="down" aria-label="Walk south">↓</button><button data-dir="right" aria-label="Walk east">→</button></div>
+    <canvas id="world" tabindex="0" aria-label="Top-down woodland. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or the plus and minus buttons."></canvas>
+    <div class="map-top"><div class="position"><small>CAMERA</small><span id="position">X 0 · Y 0</span><small>METRES</small></div><span class="north">N ↑</span></div>
+    <div class="map-bottom"><div class="legend"><span id="scale-label">1 SQUARE = 1 m</span><div class="scale-line" id="scale-line"></div><small id="scale-distance">5 m</small></div><div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><span id="zoom-label">100%</span><button id="zoom-in" aria-label="Zoom in">+</button></div></div>
+    <div class="controls"><span>Drag to pan</span><span><kbd>W A S D</kbd> / arrows pan</span><span>Scroll to zoom</span></div>
+    <div class="touch-pad" aria-label="Camera controls"><button data-dir="up" aria-label="Pan north">↑</button><button data-dir="left" aria-label="Pan west">←</button><button data-dir="down" aria-label="Pan south">↓</button><button data-dir="right" aria-label="Pan east">→</button></div>
     <details class="world-info"><summary>World info</summary><div id="world-stats"></div><p>Terrain streams in 32 × 32 m chunks. Only the visible area is drawn.</p></details>
   </main>
   <script type="module" src="app.mjs"></script>

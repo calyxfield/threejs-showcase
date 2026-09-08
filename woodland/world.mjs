@@ -107,12 +107,4 @@ export class World {
     return this.state.chunkEdits(cx,cy)?.get(index) ?? this.chunk(cx, cy)[index];
   }
   isTree(x, y) { return (this.tile(x, y) & 8) !== 0; }
-  spawn() {
-    for (let r = 0; r < 64; r++) {
-      for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) {
-        if (Math.max(Math.abs(x), Math.abs(y)) === r && !this.isTree(x, y)) return { x: x + 0.5, y: y + 0.5 };
-      }
-    }
-    return { x: 0, y: 0 }; // A tile corner is clear of tree trunks even in a dense forest.
-  }
 }
