@@ -49,6 +49,7 @@ export class WorldState {
     }
     this.revision++; this.chunkRevisions.set(key,this.revision);
   }
+  markChunkChanged(cx,cy) { this.revision++; this.chunkRevisions.set(`${cx},${cy}`,this.revision); }
   chunkEdits(cx, cy) { return this.edits.get(`${cx},${cy}`); }
 }
 
@@ -111,7 +112,8 @@ export class World {
     x = Math.floor(x); y = Math.floor(y);
     const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE);
     const index = (y - cy * CHUNK_SIZE) * CHUNK_SIZE + x - cx * CHUNK_SIZE;
-    return this.state.chunkEdits(cx,cy)?.get(index) ?? this.chunk(cx, cy)[index];
+    return this.resolveTile(x,y,this.state.chunkEdits(cx,cy)?.get(index) ?? this.chunk(cx, cy)[index]);
   }
+  resolveTile(x,y,value) { return this.farmCoverage?.isPrepared(x,y) ? value & ~8 : value; }
   isTree(x, y) { return (this.tile(x, y) & 8) !== 0; }
 }

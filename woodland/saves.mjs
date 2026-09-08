@@ -7,7 +7,7 @@ const finite = n => typeof n === 'number' && Number.isFinite(n);
 const text = (s, max) => typeof s === 'string' && s.length <= max;
 
 export function validateSave(save) {
-  if (!save || ![1, 2, 3].includes(save.version) || ![LEGACY_GENERATOR, CURRENT_GENERATOR].includes(save.generator) || (save.version === 1 && save.generator !== LEGACY_GENERATOR)) throw new Error('This save uses an unsupported world version.');
+  if (!save || ![1, 2, 3, 4].includes(save.version) || ![LEGACY_GENERATOR, CURRENT_GENERATOR].includes(save.generator) || (save.version === 1 && save.generator !== LEGACY_GENERATOR)) throw new Error('This save uses an unsupported world version.');
   const { settings: s, camera: c, edits } = save;
   if (!text(save.id, 100) || !save.id || !text(save.name, 80) || !finite(save.updated) || !s || !text(s.seed, 80) || !finite(s.scale) || s.scale < 8 || s.scale > 160 || !Number.isInteger(s.detail) || s.detail < 1 || s.detail > 5 || !finite(s.density) || s.density < 0 || s.density > 100 || !c || !finite(c.x) || !finite(c.y) || Math.abs(c.x) > 1e12 || Math.abs(c.y) > 1e12 || !finite(save.zoom) || save.zoom < .01 || save.zoom > 60 || !Array.isArray(edits) || edits.length > 200000) throw new Error('A saved world has invalid data.');
   for (const edit of edits) if (!Array.isArray(edit) || edit.length !== 3 || !Number.isSafeInteger(edit[0]) || !Number.isSafeInteger(edit[1]) || !Number.isInteger(edit[2]) || edit[2] < 0 || edit[2] > (save.generator === LEGACY_GENERATOR ? 63 : 127)) throw new Error('A saved world has invalid tile changes.');
@@ -20,7 +20,7 @@ export function encodeSave(id, name, world, camera, zoom) {
     const [cx, cy] = key.split(',').map(Number);
     for (const [index, value] of values) edits.push([cx * 32 + index % 32, cy * 32 + Math.floor(index / 32), value]);
   }
-  return validateSave({ version: 3, generator: world.generator, id, name, updated: Date.now(), settings: { ...world.settings }, camera: { ...camera }, zoom, edits, construction: world.construction ? structuredClone(world.construction) : null });
+  return validateSave({ version: 4, generator: world.generator, id, name, updated: Date.now(), settings: { ...world.settings }, camera: { ...camera }, zoom, edits, construction: world.construction ? structuredClone(world.construction) : null });
 }
 export function decodeState(save) {
   validateSave(save);

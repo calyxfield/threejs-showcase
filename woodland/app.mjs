@@ -1,6 +1,7 @@
+import {patchCoverage,coverageArea,farmPlacementError,compileCoverage,preparedRow,bindFarms} from './farms.mjs';
 import { World, CHUNK_SIZE, DEFAULTS, hash, CURRENT_GENERATOR } from './world.mjs';
 import { readSaves, writeSave, encodeSave, decodeState } from './saves.mjs';
-import { SHIP, BUILDING, MAX_SITES, MAX_JOBS, hasEditRoom, selectTrees, orderCuts, newConstruction, canPlace, land, placeBuilding, advanceConstruction } from './construction.mjs';
+import { SHIP, BUILDING, MAX_SITES, MAX_JOBS, hasEditRoom, selectTrees, orderCuts, newConstruction, canPlace, land, placeBuilding, placeFarm, advanceConstruction } from './construction.mjs';
 
 const $ = id => document.getElementById(id);
 const canvas = $('world'), ctx = canvas.getContext('2d', { alpha: false });
@@ -8,6 +9,7 @@ const form = $('settings');
 const RASTER_TILE = 16, RASTER_LIMIT = 64;
 const rasters = new Map(), overviews = new Map(), keys = new Set();
 let active = null, screen = 'menu', dirty = false, lastSaved = 0, lastChanged = 0;
+let farmDraft = null, farmErase = false, farmPreview = null, farmDraftEntries = [];
 let placement = null, cutting = false, selection = null, orderError = '', simulationAt = 0;
 let overviewCells = 0, overviewChunks = 0, overviewBuildMs = 0;
 let world, camera, width = 1, height = 1, zoom = 30, last = 0, drag = null;
@@ -57,8 +59,8 @@ function changed() {
 }
 function openWorld(save) {
   world = new World(save.settings, 96, decodeState(save), save.generator);
-  world.construction = save.version >= 2 ? structuredClone(save.construction) : null;
-  placement = null; cutting = false; selection = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
+  world.construction = save.version >= 2 ? structuredClone(save.construction) : null; bindFarms(world,world.construction);
+  placement = null; cutting = false; selection = null; farmDraft = null; farmPreview = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
   active = { id: save.id, name: save.name }; camera = { ...save.camera }; zoom = save.zoom;
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
   dirty = false; $('world-title').textContent = active.name;
@@ -101,8 +103,8 @@ form.addEventListener('input', labels);
 form.addEventListener('submit', event => {
   event.preventDefault();
   if (active && dirty && !saveCurrent()) { showScreen('menu'); return; }
-  world = new World(settings(), 96, undefined, CURRENT_GENERATOR); world.construction = newConstruction();
-  camera = { x: 0, y: 0 }; zoom = Math.min(16, innerWidth / 60); placement = null; cutting = false; selection = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
+  world = new World(settings(), 96, undefined, CURRENT_GENERATOR); world.construction = newConstruction(); bindFarms(world,world.construction);
+  camera = { x: 0, y: 0 }; zoom = Math.min(16, innerWidth / 60); placement = null; cutting = false; selection = null; farmDraft = null; farmPreview = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
   active = { id: crypto.randomUUID(), name: $('world-name').value.trim() || world.settings.seed || 'Untitled world' };
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
   $('world-title').textContent = active.name; dirty = true; showScreen('viewport'); updateBuildUI(); saveCurrent();
@@ -144,26 +146,29 @@ canvas.addEventListener('pointerdown', event => {
   canvas.focus({ preventScroll: true });
   canvas.setPointerCapture(event.pointerId);
   drag = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false };
-  if (cutting) { drag.anchor = mapTile(event.clientX,event.clientY); updateSelection(event.clientX,event.clientY); }
+  if (farmDraft) { drag.anchor=mapTile(event.clientX,event.clientY);drag.base=farmDraft.coverage;updateFarmPatch(event.clientX,event.clientY); }
+  else if (cutting) { drag.anchor = mapTile(event.clientX,event.clientY); updateSelection(event.clientX,event.clientY); }
   else canvas.classList.add('dragging');
 });
 canvas.addEventListener('pointermove', event => {
   if (!drag || event.pointerId !== drag.id) return;
   if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <= 6) return;
   drag.moved = true;
+  if (farmDraft) { updateFarmPatch(event.clientX,event.clientY); return; }
   if (cutting) { updateSelection(event.clientX,event.clientY); return; }
   camera.x -= (event.clientX - drag.x) / zoom;
   camera.y -= (event.clientY - drag.y) / zoom;
   drag.x = event.clientX; drag.y = event.clientY; changed();
 });
 function stopDrag() {
+  if(farmPreview&&farmDraft){farmPreview=null;farmDraftEntries=compileCoverage(farmDraft.coverage);updateBuildUI();}
   if (drag && canvas.hasPointerCapture(drag.id)) canvas.releasePointerCapture(drag.id);
   drag = null; canvas.classList.remove('dragging');
 }
 for (const type of ['pointerup','pointercancel','lostpointercapture']) canvas.addEventListener(type, event => {
   if (drag && event.pointerId === drag.id) {
-    if (type === 'pointerup') { if (cutting) updateSelection(event.clientX,event.clientY); else if (!drag.moved) selectSite(event.clientX,event.clientY); }
-    else if (cutting && type === 'pointercancel') selection = null;
+    if (type === 'pointerup') { if(farmDraft){updateFarmPatch(event.clientX,event.clientY);if(!farmPreview.error)farmDraft=farmPreview;else farmDraft.error=farmPreview.error;farmPreview=null;updateBuildUI();} else if (cutting) updateSelection(event.clientX,event.clientY); else if (!drag.moved) selectSite(event.clientX,event.clientY); }
+    else if (type === 'pointercancel') { if(cutting)selection=null; }
     stopDrag();
   }
 });
@@ -197,12 +202,14 @@ function rasterChunk(cx, cy) {
   const c = raster.getContext('2d', { alpha: false });
   for (let y = 0; y < CHUNK_SIZE; y++) for (let x = 0; x < CHUNK_SIZE; x++) {
     const index = y * CHUNK_SIZE + x;
-    const tile = edits?.get(index) ?? data[index], px = x * RASTER_TILE, py = y * RASTER_TILE;
-    c.fillStyle = (tile & 64 ? meadow : grass)[tile & 7]; c.fillRect(px, py, 16, 16);
+    const wx=cx*32+x,wy=cy*32+y,prepared=world.farmCoverage?.isPrepared(wx,wy);
+    const tile = world.resolveTile(wx,wy,edits?.get(index) ?? data[index]), px = x * RASTER_TILE, py = y * RASTER_TILE;
+    c.fillStyle = prepared ? (wy%2===0?'#716849':'#7f7750') : (tile & 64 ? meadow : grass)[tile & 7]; c.fillRect(px, py, 16, 16);
     const variation = hash(cx * CHUNK_SIZE + x, cy * CHUNK_SIZE + y, world.seed);
     if ((variation & 7) === 0) {
       c.fillStyle = '#d5d5a229'; c.fillRect(px + 3, py + 4, 1, 2); c.fillRect(px + 5, py + 6, 1, 2);
     }
+    if(prepared){c.fillStyle='#a4b66b';c.fillRect(px,py+6,16,3);}
     if (tile & 8) {
       const v = (tile >> 4) & 3;
       c.fillStyle = '#20392738'; c.beginPath(); c.ellipse(px+9, py+10, 6, 5, -.35, 0, Math.PI*2); c.fill();
@@ -247,34 +254,39 @@ function updateSelection(x,y) {
   selection = detailView() ? selectTrees(world,world.construction,drag.anchor,mapTile(x,y)) : {trees:[],error:'Zoom in to select individual trees.'};
   updateBuildUI();
 }
-function cancelTool() { orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
+function cancelTool() { farmDraft=null;farmPreview=null;farmDraftEntries=[]; orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
+function updateFarmPatch(x,y){const b=mapTile(x,y),a=drag.anchor;const rect={x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(a.x-b.x)+1,h:Math.abs(a.y-b.y)+1};farmPreview={...patchCoverage(drag.base,rect,farmErase),rect};if(farmPreview.coverage)farmDraftEntries=compileCoverage(farmPreview.coverage);updateBuildUI();}
 function updateBuildUI() {
-  document.querySelector('.controls span').textContent = cutting ? 'Drag to select trees' : 'Drag to pan';
-  canvas.setAttribute('aria-label', cutting ? 'Top-down world map. Tap a tree or drag to select trees, then confirm the order. W A S D or arrow keys pan. Escape cancels selection.' : 'Top-down world map. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or plus and minus buttons.');
+  document.querySelector('.controls span').textContent = farmDraft ? (farmErase?'Drag to erase farm tiles':'Drag to add farm tiles') : cutting ? 'Drag to select trees' : 'Drag to pan';
+  canvas.setAttribute('aria-label', farmDraft ? 'Farm draft. Click one tile or drag a patch to add or erase. Confirm queues the whole farm; Escape cancels. W A S D pans.' : cutting ? 'Top-down world map. Tap a tree or drag to select trees, then confirm the order. W A S D or arrow keys pan. Escape cancels selection.' : 'Top-down world map. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or plus and minus buttons.');
   const game = world?.construction;
   $('build-panel').hidden = !game;
   $('ship-tools').hidden = !game?.ship;
-  $('build-panel').classList.toggle('context-active', !!game && (!game.ship || !!placement || cutting));
+  $('build-panel').classList.toggle('context-active', !!game && (!game.ship || !!placement || cutting || !!farmDraft));
   if (!game) return;
+  $('farm-modes').hidden=!farmDraft;
+  if(farmDraft){$('farm-add').setAttribute('aria-pressed',String(!farmErase));$('farm-erase').setAttribute('aria-pressed',String(farmErase));}
   const landing = !game.ship, rect = landing ? {...game.pending,...SHIP} : placement ? {...placement,...BUILDING} : null;
   const valid = rect && canPlace(game,rect) && zoom >= 4;
-  $('build-title').textContent = landing ? 'Choose a landing site' : cutting ? 'Cut trees' : placement ? 'Building blueprint' : 'Drone orders';
-  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : cutting ? 'Tap a tree or drag a box, then confirm. Up to 128 trees / 4,096 tiles per order. WASD / arrows pan.' : placement ? '6 × 6 tiles. Tap a site, then place. Build and cut orders share one queue.' : 'Place a building blueprint or mark trees for the ship’s drone.';
-  $('confirm-build').hidden = !rect && !cutting;
-  $('confirm-build').textContent = landing ? 'Land here' : cutting ? `Order cutting${selection?.trees.length ? ' ('+selection.trees.length+')' : ''}` : 'Place blueprint';
-  $('confirm-build').disabled = cutting ? !detailView() || !selection?.trees.length || !!selection.error : !valid || (!landing && (game.jobs.length >= MAX_JOBS || game.sites.length >= MAX_SITES));
-  $('cancel-build').hidden = !placement && !cutting;
-  $('start-build').hidden = landing || !!placement || cutting;
-  $('start-cut').hidden = landing || !!placement || cutting;
+  $('build-title').textContent = landing ? 'Choose a landing site' : farmDraft ? 'Farm layout' : cutting ? 'Cut trees' : placement ? 'Building blueprint' : 'Drone orders';
+  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : farmDraft ? 'Add or erase patches, then confirm one farm. Holes stay untouched. Arrow keys / WASD pan.' : cutting ? 'Tap a tree or drag a box, then confirm. Up to 128 trees / 4,096 tiles per order. WASD / arrows pan.' : placement ? '6 × 6 tiles. Tap a site, then place. Build and cut orders share one queue.' : 'Place a building blueprint or mark trees for the ship’s drone.';
+  $('confirm-build').hidden = !rect && !cutting && !farmDraft;
+  $('confirm-build').textContent = landing ? 'Land here' : farmDraft ? 'Prepare farm' : cutting ? `Order cutting${selection?.trees.length ? ' ('+selection.trees.length+')' : ''}` : 'Place blueprint';
+  $('confirm-build').disabled = farmDraft ? !farmDraft.area || !!farmPlacementError(game,farmDraft.coverage) : cutting ? !detailView() || !selection?.trees.length || !!selection.error : !valid || (!landing && (game.jobs.length >= MAX_JOBS || game.sites.length >= MAX_SITES));
+  $('cancel-build').hidden = !placement && !cutting && !farmDraft;
+  $('start-build').hidden = landing || !!placement || cutting || !!farmDraft;
+  $('start-farm').hidden = landing || !!placement || cutting || !!farmDraft;
+  $('start-cut').hidden = landing || !!placement || cutting || !!farmDraft;
   $('start-build').disabled = game.sites.length >= MAX_SITES || game.jobs.length >= MAX_JOBS;
   $('view-ship').hidden = landing;
   let status = '';
-  if (cutting) status = !detailView() ? 'Zoom in to select individual trees.' : selection?.error || (selection ? `${selection.trees.length} ${selection.trees.length === 1 ? 'tree' : 'trees'} marked · ${game.jobs.length} jobs queued` : 'Select trees. Dragging marks an area in this tool.');
+  if(farmDraft){const d=farmPreview||farmDraft;status=d.error||farmPlacementError(game,d.coverage)||`${d.area.toLocaleString()} m² · 256 tiles/s`;if(d.rect)status+=` · Patch ${d.rect.w} × ${d.rect.h} m`;}
+  else if (cutting) status = !detailView() ? 'Zoom in to select individual trees.' : selection?.error || (selection ? `${selection.trees.length} ${selection.trees.length === 1 ? 'tree' : 'trees'} marked · ${game.jobs.length} jobs queued` : 'Select trees. Dragging marks an area in this tool.');
   else if (rect) status = zoom < 4 ? 'Zoom in to choose exact tiles.' : valid ? `Site X ${rect.x} · Y ${rect.y}` : 'This footprint overlaps the ship or a building.';
   else {
     const d = game.drone, job = game.jobs[0], queue = game.jobs.length;
-    const progress = job?.kind === 'build' ? game.sites[job.site].progress : job?.progress;
-    status = ['building','cutting'].includes(d.stage) ? `Drone ${d.stage} ${Math.floor(progress*100)}% · ${queue} remaining` : d.stage === 'outbound' ? `Flying to ${job.kind === 'cut' ? 'tree' : 'blueprint'} · ${queue} remaining` : d.stage === 'returning' ? `Drone returning · ${queue} queued` : `${game.cursor} buildings complete · Drone ready`;
+    const progress = job?.kind === 'build' ? game.sites[job.site].progress : job?.kind==='farm' ? world.farmCoverage.fields.get(job.farm).farm.progress : job?.progress;
+    status = ['building','cutting','preparing'].includes(d.stage) ? `Drone ${d.stage} ${Math.floor(progress*100)}% · ${queue} remaining` : d.stage === 'outbound' ? `Flying to ${job.kind === 'cut' ? 'tree' : job.kind==='farm' ? 'farm section' : 'blueprint'} · ${queue} remaining` : d.stage === 'returning' ? `Drone returning · ${queue} queued` : `${game.cursor} buildings · ${game.farms.filter(f=>f.progress===1).length} farms prepared · Drone ready`;
     if (queue >= MAX_JOBS) status += ` · Queue limit ${MAX_JOBS}`;
   }
   $('build-status').textContent = orderError || status;
@@ -283,9 +295,13 @@ $('start-build').addEventListener('click', () => {
   cancelTool(); placement = { x: Math.floor(camera.x - BUILDING.w/2), y: Math.floor(camera.y - BUILDING.h/2) }; updateBuildUI();
 });
 $('start-cut').addEventListener('click', () => { cancelTool(); cutting = true; canvas.classList.add('selecting'); updateBuildUI(); });
+$('start-farm').addEventListener('click',()=>{cancelTool();farmDraft={coverage:[],area:0};farmErase=false;canvas.classList.add('selecting');updateBuildUI();});
+$('farm-add').addEventListener('click',()=>{farmErase=false;updateBuildUI();});
+$('farm-erase').addEventListener('click',()=>{farmErase=true;updateBuildUI();});
 $('cancel-build').addEventListener('click', cancelTool);
 $('confirm-build').addEventListener('click', () => {
   const game = world.construction;
+  if(farmDraft){const result=placeFarm(world,game,farmDraft.coverage);if(result.error){farmDraft.error=result.error;updateBuildUI();return;}cancelTool();changed();saveCurrent();return;}
   if (zoom < 4) return;
   if (cutting) {
     if (!detailView()) return;
@@ -336,6 +352,21 @@ function drawShipDetails(ship, drone, left, top) {
   ctx.strokeStyle = '#5b707c';ctx.beginPath();ctx.moveTo(16.7+doorWidth,3);ctx.lineTo(16.7+doorWidth,9);ctx.moveTo(23.3-doorWidth,3);ctx.lineTo(23.3-doorWidth,9);ctx.stroke();
   ctx.restore();
   if (zoom >= 10) { ctx.save();ctx.fillStyle = '#e1e5e4';ctx.font = '10px monospace';ctx.fillText('DRONE BAY',sx+17.1*zoom,sy+2*zoom);ctx.restore(); }
+}
+function drawFarmCoverage(entries,left,top,color,prepared=Infinity,outline=false){
+ ctx.save();ctx.fillStyle=color;ctx.strokeStyle=color;ctx.lineWidth=1;
+ for(const c of entries){const sx=(c.cx*32-left)*zoom,sy=(c.cy*32-top)*zoom,size=32*zoom;if(sx+size<0||sy+size<0||sx>width||sy>height)continue;
+  const count=Math.max(0,Math.min(c.count,prepared-c.start));if(!count)continue;
+  if(!c.rows&&count===1024){if(outline)ctx.strokeRect(sx,sy,size,size);else ctx.fillRect(sx,sy,size,size);continue;}
+  for(let y=0;y<32;y++){let v=preparedRow(c,y,count);if(!v)continue;let x=0;while(x<32){while(x<32&&!(v&(1<<x)))x++;const a=x;while(x<32&&(v&(1<<x)))x++;if(x>a){if(outline)ctx.strokeRect(sx+a*zoom,sy+y*zoom,(x-a)*zoom,zoom);else ctx.fillRect(sx+a*zoom,sy+y*zoom,(x-a)*zoom,zoom);}}}
+ }ctx.restore();
+}
+function drawFarms(left,top){
+ for(const{farm,entries}of world.farmCoverage?.fields.values()||[]){
+  if(!detailView())drawFarmCoverage(entries,left,top,'#9ba766',Math.floor(farm.area*farm.progress+1e-7));
+  if(farm.progress<1)drawFarmCoverage(entries,left,top,'#bfcf8c55',Infinity,true);
+ }
+ if(farmDraft){const draft=farmPreview?.coverage?farmPreview:farmDraft;drawFarmCoverage(farmDraftEntries,left,top,farmPreview?.error?'#ee907b77':'#98d5df88');drawFarmCoverage(farmDraftEntries,left,top,farmPreview?.error?'#ffac91':'#d5f5ff',Infinity,true);}
 }
 function drawConstruction(left, top) {
   const game = world.construction;
@@ -444,6 +475,7 @@ function draw(now) {
   for(let y=Math.ceil(top/8)*8;y<=bottom;y+=8){const sy=Math.round((y-top)*zoom)+.5;ctx.moveTo(0,sy);ctx.lineTo(width,sy);}
   ctx.stroke();
   }
+  drawFarms(left,top);
   drawConstruction(left, top);
   frameCount++; frameMs += performance.now()-start;
   if(now-statsAt>250){$('position').textContent=`X ${Math.floor(camera.x)} · Y ${Math.floor(camera.y)}`;updateStats();updateBuildUI();statsAt=now;}
@@ -453,6 +485,7 @@ function draw(now) {
 // Read-only diagnostics for reproducible, bounded verification.
 window.woodland = Object.freeze({
   get construction(){return world?.construction ? structuredClone(world.construction) : null;},
+  get farmDraft(){return farmDraft ? structuredClone(farmPreview?.coverage?farmPreview:farmDraft) : null;},
   get selection(){return selection ? structuredClone(selection) : null;},
   get cutting(){return cutting;},
   get generator(){return world?.generator;},

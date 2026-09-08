@@ -48,7 +48,7 @@
     <header class="toolbar" aria-label="Map tools">
       <div class="toolbar-main">
         <div class="map-heading"><button id="save-menu" class="map-button">Save & Menu</button><span id="world-title"></span></div>
-        <div id="ship-tools" class="build-actions"><button id="start-build">Build</button><button id="start-cut">Cut Trees</button><button id="view-ship" class="quiet">Go to ship</button></div>
+        <div id="ship-tools" class="build-actions"><button id="start-build">Build</button><button id="start-cut">Cut Trees</button><button id="start-farm">Farm</button><button id="view-ship" class="quiet">Go to ship</button></div>
         <details id="view-tools" class="view-tools" open><summary>View</summary><div class="view-actions">
           <div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Return to one-metre detail">1:1</button><button id="zoom-in" aria-label="Zoom in">+</button></div>
           <details class="world-info"><summary>World info</summary><div class="info-content"><div id="world-stats"></div><p>The close view shows individual trees. Distant views show approximate forest cover.</p></div></details>
@@ -56,7 +56,7 @@
         </div></details>
       </div>
       <div class="toolbar-lower">
-        <section id="build-panel" hidden><div class="context-copy"><h2 id="build-title"></h2><p id="build-help"></p></div><div class="build-actions"><button id="confirm-build">Land here</button><button id="cancel-build" class="quiet">Cancel</button></div><p id="build-status" role="status"></p></section>
+        <section id="build-panel" hidden><div class="context-copy"><h2 id="build-title"></h2><p id="build-help"></p></div><div class="build-actions"><span id="farm-modes" hidden><button id="farm-add" aria-pressed="true">Add</button><button id="farm-erase" aria-pressed="false">Erase</button></span><button id="confirm-build">Land here</button><button id="cancel-build" class="quiet">Cancel</button></div><p id="build-status" role="status"></p></section>
         <div class="map-meta"><div class="position"><span id="position">X 0 · Y 0</span><small>m · N ↑</small></div><div id="save-status" role="status"></div></div>
       </div>
     </header>
