@@ -14,5 +14,6 @@ canvas.selecting{cursor:crosshair}
 
 #farm-modes{display:flex;gap:6px}.toolbar button[aria-pressed=false]{background:none;color:#dfebce}.toolbar #ship-tools{flex-wrap:wrap}@media(max-width:700px){.toolbar #ship-tools{gap:5px}.toolbar #ship-tools button{padding:9px 8px}.toolbar #build-panel.context-active>.build-actions{flex-wrap:wrap}}
 
-.brush-label{display:inline-flex;align-items:center;gap:5px;font-size:12px;margin-left:6px}.brush-label select{width:74px;padding:6px;background:#263f31;color:#f0edda;border:1px solid #7d9178;border-radius:3px}#farm-modes{flex-wrap:wrap;align-items:center;gap:4px}
-.toolbar #build-panel.context-active>.build-actions{max-width:100%;min-width:0}@media(max-width:700px){#farm-modes{flex-basis:100%}.toolbar #build-panel.context-active>.build-actions{width:100%}}
+.toolbar #build-panel.context-active>.build-actions{max-width:100%;min-width:0}
+
+#farm-modes{flex-wrap:wrap;align-items:center;min-width:0}.toolbar #farm-modes select{padding:6px;background:#263f31;color:#f0edda;border:1px solid #7d9178;border-radius:3px;font:12px Arial,sans-serif}#brush-controls{display:inline-flex;align-items:center;gap:5px;font-size:12px;margin-left:3px}#brush-controls select{width:74px}@media(max-width:700px){#farm-modes{flex-basis:100%}.toolbar #build-panel.context-active>.build-actions{width:100%}}
