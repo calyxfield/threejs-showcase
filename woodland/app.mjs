@@ -84,13 +84,13 @@ $('load-world').addEventListener('click', loadList);
 $('continue-world').addEventListener('click', () => showScreen('viewport'));
 for (const button of document.querySelectorAll('[data-back]')) button.addEventListener('click', () => showScreen('menu'));
 $('save-menu').addEventListener('click', () => { saveCurrent(); showScreen('menu'); });
-$('random-seed').addEventListener('click', () => { $('seed').value = `woodland-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; });
+$('random-seed').addEventListener('click', () => { $('seed').value = `steel-space-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; });
 form.addEventListener('input', labels);
 form.addEventListener('submit', event => {
   event.preventDefault();
   if (active && dirty && !saveCurrent()) { showScreen('menu'); return; }
   world = new World(settings()); camera = { x: 0, y: 0 }; zoom = 30;
-  active = { id: crypto.randomUUID(), name: $('world-name').value.trim() || world.settings.seed || 'Untitled woodland' };
+  active = { id: crypto.randomUUID(), name: $('world-name').value.trim() || world.settings.seed || 'Untitled world' };
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
   $('world-title').textContent = active.name; dirty = true; showScreen('viewport'); saveCurrent();
 });

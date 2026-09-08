@@ -4,28 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#192c24">
-  <title>Woodland · World foundation</title>
+  <title>Steel Space</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <section id="menu" class="screen">
     <div class="menu-card">
-      <div class="eyebrow"><span class="mark" aria-hidden="true"></span> WORLD FOUNDATION / 01</div>
-      <h1>Woodland</h1><p class="intro">A world from a seed.<br>Explore it from above.</p>
+      <div class="eyebrow"><span class="mark" aria-hidden="true"></span> FACTORY GAME / PROTOTYPE</div>
+      <h1>Steel Space</h1><p class="intro">A world from a seed.<br>Explore it from above.</p>
       <button id="new-world" class="primary">New World <span aria-hidden="true">→</span></button>
       <button id="load-world" class="secondary">Load World</button>
       <button id="continue-world" class="secondary" hidden>Continue open world</button>
-      <p class="menu-note">GRASS & WOODLAND · ONE-METRE TILES</p>
+      <p class="menu-note">PROCEDURAL WORLD · ONE-METRE TILES</p>
       <p id="menu-status" class="notice" role="status"></p>
     </div>
-    <div class="menu-map" aria-hidden="true"><span>WOODLAND<br>FIELD ATLAS</span><div class="contour one"></div><div class="contour two"></div><div class="contour three"></div></div>
+    <div class="menu-map" aria-hidden="true"><span>STEEL SPACE<br>WORLD MAP</span><div class="contour one"></div><div class="contour two"></div><div class="contour three"></div></div>
   </section>
   <section id="create-screen" class="screen" hidden>
-    <div class="creation-card"><button class="back" data-back>← Main menu</button><h2>New world</h2><p class="screen-note">Choose how your woodland grows.</p>
+    <div class="creation-card"><button class="back" data-back>← Main menu</button><h2>New world</h2><p class="screen-note">Set the terrain and tree coverage.</p>
     <form id="settings">
-      <label for="world-name">World name</label><input id="world-name" maxlength="80" placeholder="My woodland" autocomplete="off"><div class="seed-row"><label for="seed">World seed</label><button id="random-seed" type="button">New seed</button></div>
-      <input id="seed" name="seed" value="woodland-01" maxlength="80" spellcheck="false" autocomplete="off">
-      <p class="hint">Same seed and settings, same woodland.</p>
+      <label for="world-name">World name</label><input id="world-name" maxlength="80" placeholder="My world" autocomplete="off"><div class="seed-row"><label for="seed">World seed</label><button id="random-seed" type="button">New seed</button></div>
+      <input id="seed" name="seed" value="steel-space-01" maxlength="80" spellcheck="false" autocomplete="off">
+      <p class="hint">Same seed and settings, same world.</p>
       <div class="range-title"><label for="scale">Patch size</label><output id="scale-value" for="scale">48 m</output></div>
       <input id="scale" name="scale" type="range" min="8" max="160" step="1" value="48">
       <p class="hint">Perlin noise scale. Larger patches make broader groves and clearings.</p>
@@ -44,7 +44,7 @@
     <div class="load-card"><button class="back" data-back>← Main menu</button><h2>Load world</h2><p class="screen-note">Saved in this browser on this device. Clearing browser data removes these saves.</p><div id="save-list"></div><p id="load-status" class="notice" role="status"></p></div>
   </section>
   <main id="viewport" hidden>
-    <canvas id="world" tabindex="0" aria-label="Top-down woodland. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or the plus and minus buttons."></canvas>
+    <canvas id="world" tabindex="0" aria-label="Top-down world map. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or the plus and minus buttons."></canvas>
     <div class="map-top"><div class="map-heading"><button id="save-menu" class="map-button">Save & Menu</button><span id="world-title"></span></div><div class="position"><small>CAMERA</small><span id="position">X 0 · Y 0</span><small>METRES</small></div><span class="north">N ↑</span></div>
     <div id="save-status" role="status"></div>
     <div class="map-bottom"><div class="legend"><span id="scale-label">1 SQUARE = 1 m</span><span id="view-span"></span><div class="scale-line" id="scale-line"></div><small id="scale-distance">5 m</small></div><div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Return to one-metre detail">1:1</button><button id="zoom-in" aria-label="Zoom in">+</button></div></div>
