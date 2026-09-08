@@ -286,13 +286,10 @@ function drawShipDetails(ship, drone, left, top) {
     ctx.fillStyle = '#77848c'; ctx.fillRect(3,y+.4,3.1,2.4);
     ctx.strokeStyle = '#b0b9bd'; ctx.strokeRect(.8,y,5.7,3.2);
   }
-  // Cockpit at the bow, kept inside the collision footprint.
-  ctx.fillStyle = '#697780'; ctx.beginPath();
+  // Sealed bow plating on the uncrewed ship; no cockpit or glazing.
+  ctx.fillStyle = '#9ba3a7'; ctx.beginPath();
   ctx.moveTo(33,1.5);ctx.lineTo(37.8,1.5);ctx.lineTo(39.2,3);ctx.lineTo(39.2,9);ctx.lineTo(37.8,10.5);ctx.lineTo(33,10.5);ctx.closePath();ctx.fill();
-  ctx.fillStyle = '#60818d';ctx.beginPath();
-  ctx.moveTo(34.5,2.4);ctx.lineTo(37.5,2.4);ctx.lineTo(38.4,3.5);ctx.lineTo(38.4,8.5);ctx.lineTo(37.5,9.6);ctx.lineTo(34.5,9.6);ctx.closePath();ctx.fill();
-  ctx.strokeStyle = '#b6cbd0';ctx.stroke();
-  ctx.strokeStyle = '#40565f';ctx.beginPath();ctx.moveTo(34.5,6);ctx.lineTo(38.4,6);ctx.stroke();
+  ctx.strokeStyle = '#707d85';ctx.stroke();
   // This roof bay is centred on the drone's real departure/return coordinates.
   const distance = drone ? Math.hypot(drone.x - ship.x - ship.w / 2, drone.y - ship.y - ship.h / 2) : Infinity;
   const openness = drone?.stage === 'outbound' ? Math.max(0,1-distance/8) : drone?.stage === 'returning' ? Math.max(0,1-distance/12) : 0;
