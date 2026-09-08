@@ -21,7 +21,7 @@
     <div class="menu-map" aria-hidden="true"><span>STEEL SPACE<br>WORLD MAP</span><div class="contour one"></div><div class="contour two"></div><div class="contour three"></div></div>
   </section>
   <section id="create-screen" class="screen" hidden>
-    <div class="creation-card"><button class="back" data-back>← Main menu</button><h2>New world</h2><p class="screen-note">Set the terrain and tree coverage.</p>
+    <div class="creation-card"><button class="back" data-back>← Main menu</button><h2>New world</h2><p class="screen-note">Set the woodland and grasslands, then choose where your ship lands.</p>
     <form id="settings">
       <label for="world-name">World name</label><input id="world-name" maxlength="80" placeholder="My world" autocomplete="off"><div class="seed-row"><label for="seed">World seed</label><button id="random-seed" type="button">New seed</button></div>
       <input id="seed" name="seed" value="steel-space-01" maxlength="80" spellcheck="false" autocomplete="off">
@@ -47,6 +47,7 @@
     <canvas id="world" tabindex="0" aria-label="Top-down world map. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or the plus and minus buttons."></canvas>
     <div class="map-top"><div class="map-heading"><button id="save-menu" class="map-button">Save & Menu</button><span id="world-title"></span></div><div class="position"><small>CAMERA</small><span id="position">X 0 · Y 0</span><small>METRES</small></div><span class="north">N ↑</span></div>
     <div id="save-status" role="status"></div>
+    <section id="build-panel" hidden><h2 id="build-title"></h2><p id="build-help"></p><div class="build-actions"><button id="confirm-build">Land here</button><button id="start-build">Build</button><button id="cancel-build" class="quiet">Cancel</button><button id="view-ship" class="quiet">Go to ship</button></div><p id="build-status" role="status"></p></section>
     <div class="map-bottom"><div class="legend"><span id="scale-label">1 SQUARE = 1 m</span><span id="view-span"></span><div class="scale-line" id="scale-line"></div><small id="scale-distance">5 m</small></div><div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Return to one-metre detail">1:1</button><button id="zoom-in" aria-label="Zoom in">+</button></div></div>
     <div class="controls"><span>Drag to pan</span><span><kbd>W A S D</kbd> / arrows pan</span><span>Scroll to zoom</span></div>
     <div class="touch-pad" aria-label="Camera controls"><button data-dir="up" aria-label="Pan north">↑</button><button data-dir="left" aria-label="Pan west">←</button><button data-dir="down" aria-label="Pan south">↓</button><button data-dir="right" aria-label="Pan east">→</button></div>

@@ -1,4 +1,6 @@
 export const CHUNK_SIZE = 32;
+export const LEGACY_GENERATOR = 'woodland-perlin-v1';
+export const CURRENT_GENERATOR = 'steel-space-biomes-v2';
 export const DEFAULTS = Object.freeze({ seed: 'woodland-01', scale: 48, detail: 3, density: 38 });
 
 export function seedHash(text) {
@@ -30,7 +32,6 @@ export function perlin(x, y, seed) {
 // Authoritative mutable state is separate from all disposable generation/render caches.
 // This initial layer stores sparse tile overrides. Future factory entities and their
 // simulation scheduler belong here/alongside it, never in viewport-owned chunks.
-// Persistence across page reloads is intentionally not implemented in this prototype.
 export class WorldState {
   constructor() { this.edits = new Map(); this.revision = 0; }
   setTile(x, y, value) {
@@ -42,7 +43,7 @@ export class WorldState {
       if (!edits?.delete(index)) return;
       if (!edits.size) this.edits.delete(key);
     } else {
-      if (!Number.isInteger(value) || value < 0 || value > 63) throw new RangeError('Tile value must be an integer from 0 to 63.');
+      if (!Number.isInteger(value) || value < 0 || value > 127) throw new RangeError('Tile value must be an integer from 0 to 127.');
       if (!this.edits.has(key)) this.edits.set(key, new Map());
       this.edits.get(key).set(index, value);
     }
@@ -52,7 +53,9 @@ export class WorldState {
 }
 
 export class World {
-  constructor(settings = DEFAULTS, cacheLimit = 96, state = new WorldState()) {
+  constructor(settings = DEFAULTS, cacheLimit = 96, state = new WorldState(), generator = LEGACY_GENERATOR) {
+    if (![LEGACY_GENERATOR, CURRENT_GENERATOR].includes(generator)) throw new Error('Unsupported terrain generator.');
+    this.generator = generator;
     this.settings = Object.freeze({
       seed: String(settings.seed ?? DEFAULTS.seed),
       scale: Math.max(8, Math.min(160, Number(settings.scale) || DEFAULTS.scale)),
@@ -78,10 +81,14 @@ export class World {
   sample(x, y) {
     const f = this.field(x, y);
     const t = Math.max(0, Math.min(1, (f - 0.27) / 0.43));
-    const chance = t * t * (3 - 2 * t) * this.settings.density / 100 * 0.92;
+    const grassland = this.isGrassland(x, y);
+    const chance = grassland ? 0 : t * t * (3 - 2 * t) * this.settings.density / 100 * 0.92;
     const tree = hash(x, y, this.seed ^ 0xa31c29d7) / 4294967296 < chance;
     // Low 3 bits: grass shade. Bit 3: tree. High 2 bits: tree variant.
-    return Math.min(7, Math.floor(f * 8)) | (tree ? 8 : 0) | ((hash(x, y, this.seed ^ 7793) & 3) << 4);
+    return Math.min(7, Math.floor(f * 8)) | (tree ? 8 : 0) | ((hash(x, y, this.seed ^ 7793) & 3) << 4) | (grassland ? 64 : 0);
+  }
+  isGrassland(x, y) {
+    return this.generator === CURRENT_GENERATOR && perlin((x + .5) / 180 + 41.7, (y + .5) / 180 - 29.3, this.seed ^ 0x6ab20c91) > -.02;
   }
   chunk(cx, cy) {
     const key = `${cx},${cy}`;

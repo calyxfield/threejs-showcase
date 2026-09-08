@@ -1,5 +1,6 @@
-import { World, CHUNK_SIZE, DEFAULTS, hash } from './world.mjs';
+import { World, CHUNK_SIZE, DEFAULTS, hash, CURRENT_GENERATOR } from './world.mjs';
 import { readSaves, writeSave, encodeSave, decodeState } from './saves.mjs';
+import { SHIP, BUILDING, MAX_SITES, newConstruction, canPlace, land, placeBuilding, advanceConstruction } from './construction.mjs';
 
 const $ = id => document.getElementById(id);
 const canvas = $('world'), ctx = canvas.getContext('2d', { alpha: false });
@@ -7,11 +8,13 @@ const form = $('settings');
 const RASTER_TILE = 16, RASTER_LIMIT = 64;
 const rasters = new Map(), overviews = new Map(), keys = new Set();
 let active = null, screen = 'menu', dirty = false, lastSaved = 0, lastChanged = 0;
+let placement = null, simulationAt = 0;
 let overviewCells = 0, overviewChunks = 0, overviewBuildMs = 0;
 let world, camera, width = 1, height = 1, zoom = 30, last = 0, drag = null;
 let visibleChunks = 0, frameCount = 0, frameMs = 0, statsAt = 0;
 let renderedStateRevision = 0;
 const grass = ['#9aa570','#929f68','#8b9a62','#84955d','#7d9058','#768b54','#718550','#6a804c'];
+const meadow = ['#b2b67c','#adb177','#a7ae72','#a2aa6d','#9da668','#98a363','#93a05f','#909d5b'];
 const crowns = ['#36573c','#416341','#34533a','#4a6a43'];
 
 function settings() {
@@ -53,12 +56,14 @@ function changed() {
   dirty = true; lastChanged = performance.now();
 }
 function openWorld(save) {
-  world = new World(save.settings, 96, decodeState(save));
+  world = new World(save.settings, 96, decodeState(save), save.generator);
+  world.construction = save.version === 2 ? structuredClone(save.construction) : null;
+  placement = null; simulationAt = performance.now();
   active = { id: save.id, name: save.name }; camera = { ...save.camera }; zoom = save.zoom;
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
   dirty = false; $('world-title').textContent = active.name;
   $('save-status').classList.remove('error'); $('save-status').textContent = 'Saved in this browser';
-  showScreen('viewport'); updateStats();
+  showScreen('viewport'); updateStats(); updateBuildUI();
 }
 function loadList() {
   const list = $('save-list'); list.replaceChildren(); $('load-status').textContent = '';
@@ -73,7 +78,14 @@ function loadList() {
       const copy = document.createElement('div'), title = document.createElement('h3'), info = document.createElement('p'), button = document.createElement('button');
       title.textContent = save.name; info.textContent = `Seed ${save.settings.seed} · ${new Date(save.updated).toLocaleString()}`;
       button.textContent = 'Load'; button.setAttribute('aria-label', `Load ${save.name}`);
-      button.addEventListener('click', () => { if (active && dirty && !saveCurrent()) { $('load-status').textContent = 'The open world could not be saved. Return to the menu to continue it.'; return; } openWorld(save); });
+      button.addEventListener('click', () => {
+        if (active && dirty && !saveCurrent()) { $('load-status').textContent = 'The open world could not be saved. Return to the menu to continue it.'; return; }
+        try {
+          const latest = readSaves().find(item => item.id === save.id);
+          if (!latest) throw new Error('This saved world is no longer available.');
+          openWorld(latest);
+        } catch (error) { $('load-status').textContent = `Could not load world. ${error.message}`; }
+      });
       copy.append(title, info); item.append(copy, button); list.append(item);
     }
   } catch (error) { $('load-status').textContent = `Could not load worlds. ${error.message}`; }
@@ -89,10 +101,11 @@ form.addEventListener('input', labels);
 form.addEventListener('submit', event => {
   event.preventDefault();
   if (active && dirty && !saveCurrent()) { showScreen('menu'); return; }
-  world = new World(settings()); camera = { x: 0, y: 0 }; zoom = 30;
+  world = new World(settings(), 96, undefined, CURRENT_GENERATOR); world.construction = newConstruction();
+  camera = { x: 0, y: 0 }; zoom = Math.min(16, innerWidth / 60); placement = null; simulationAt = performance.now();
   active = { id: crypto.randomUUID(), name: $('world-name').value.trim() || world.settings.seed || 'Untitled world' };
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
-  $('world-title').textContent = active.name; dirty = true; showScreen('viewport'); saveCurrent();
+  $('world-title').textContent = active.name; dirty = true; showScreen('viewport'); updateBuildUI(); saveCurrent();
 });
 window.addEventListener('pagehide', () => { if (active && dirty) saveCurrent(); });
 
@@ -106,7 +119,7 @@ function resize() {
 function formatDistance(metres) {
   return metres >= 1000 ? `${Number((metres / 1000).toPrecision(3))} km` : `${Number(metres.toPrecision(3))} m`;
 }
-function detailView() { return zoom >= Math.max(8, width / (CHUNK_SIZE * 6), height / (CHUNK_SIZE * 6)); }
+function detailView() { return zoom >= Math.max(4, width / (CHUNK_SIZE * 6), height / (CHUNK_SIZE * 6)); }
 function setZoom(next) {
   const before = zoom; zoom = Math.max(.01, Math.min(60, next));
   const target = 100 / zoom, power = 10 ** Math.floor(Math.log10(target));
@@ -127,11 +140,13 @@ canvas.addEventListener('pointerdown', event => {
   event.preventDefault();
   canvas.focus({ preventScroll: true });
   canvas.setPointerCapture(event.pointerId);
-  drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  drag = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false };
   canvas.classList.add('dragging');
 });
 canvas.addEventListener('pointermove', event => {
   if (!drag || event.pointerId !== drag.id) return;
+  if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <= 6) return;
+  drag.moved = true;
   camera.x -= (event.clientX - drag.x) / zoom;
   camera.y -= (event.clientY - drag.y) / zoom;
   drag.x = event.clientX; drag.y = event.clientY; changed();
@@ -141,7 +156,10 @@ function stopDrag() {
   drag = null; canvas.classList.remove('dragging');
 }
 for (const type of ['pointerup','pointercancel','lostpointercapture']) canvas.addEventListener(type, event => {
-  if (drag && event.pointerId === drag.id) stopDrag();
+  if (drag && event.pointerId === drag.id) {
+    if (type === 'pointerup' && !drag.moved) selectSite(event.clientX, event.clientY);
+    stopDrag();
+  }
 });
 const movementKeys = new Set(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright']);
 window.addEventListener('keydown', event => {
@@ -171,7 +189,7 @@ function rasterChunk(cx, cy) {
   for (let y = 0; y < CHUNK_SIZE; y++) for (let x = 0; x < CHUNK_SIZE; x++) {
     const index = y * CHUNK_SIZE + x;
     const tile = edits?.get(index) ?? data[index], px = x * RASTER_TILE, py = y * RASTER_TILE;
-    c.fillStyle = grass[tile & 7]; c.fillRect(px, py, 16, 16);
+    c.fillStyle = (tile & 64 ? meadow : grass)[tile & 7]; c.fillRect(px, py, 16, 16);
     const variation = hash(cx * CHUNK_SIZE + x, cy * CHUNK_SIZE + y, world.seed);
     if ((variation & 7) === 0) {
       c.fillStyle = '#d5d5a229'; c.fillRect(px + 3, py + 4, 1, 2); c.fillRect(px + 5, py + 6, 1, 2);
@@ -201,8 +219,85 @@ function pan(dt) {
   const distance = 480 / zoom * dt / Math.hypot(dx,dy);
   camera.x += dx * distance; camera.y += dy * distance; changed();
 }
+function selectSite(clientX, clientY) {
+  const game = world.construction;
+  if (!game || (game.ship && !placement)) return;
+  const bounds = canvas.getBoundingClientRect(), size = game.ship ? BUILDING : SHIP;
+  const position = { x: Math.floor(camera.x + (clientX - bounds.left - width / 2) / zoom - size.w / 2), y: Math.floor(camera.y + (clientY - bounds.top - height / 2) / zoom - size.h / 2) };
+  if (!game.ship) { game.pending = position; changed(); }
+  else placement = position;
+  updateBuildUI();
+}
+function updateBuildUI() {
+  const game = world?.construction;
+  $('build-panel').hidden = !game;
+  if (!game) return;
+  const landing = !game.ship;
+  $('build-title').textContent = landing ? 'Choose a landing site' : placement ? 'Building blueprint' : 'Construction';
+  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : placement ? '6 × 6 tiles. Tap a site, then place. The drone builds blueprints in order.' : 'Place a blueprint for the ship’s drone to construct.';
+  const rect = landing ? { ...game.pending, ...SHIP } : placement ? { ...placement, ...BUILDING } : null;
+  const valid = rect && canPlace(game, rect) && zoom >= 4;
+  $('confirm-build').hidden = !rect;
+  $('confirm-build').textContent = landing ? 'Land here' : 'Place blueprint';
+  $('confirm-build').disabled = !valid;
+  $('cancel-build').hidden = !placement;
+  $('start-build').hidden = landing || !!placement;
+  $('start-build').disabled = game.sites.length >= MAX_SITES;
+  $('view-ship').hidden = landing;
+  let status = '';
+  if (rect) status = zoom < 4 ? 'Zoom in to choose exact tiles.' : valid ? `Site X ${rect.x} · Y ${rect.y}` : 'This footprint overlaps the ship or a building.';
+  else {
+    const d = game.drone, queue = game.sites.length - game.cursor;
+    status = d.stage === 'building' ? `Drone building ${Math.floor(game.sites[game.cursor].progress * 100)}% · ${queue} remaining` : d.stage === 'outbound' ? `Drone flying to blueprint · ${queue} remaining` : d.stage === 'returning' ? `Drone returning · ${queue} queued` : `${game.cursor} complete · Drone ready`;
+  }
+  $('build-status').textContent = status;
+}
+$('start-build').addEventListener('click', () => {
+  placement = { x: Math.floor(camera.x - BUILDING.w / 2), y: Math.floor(camera.y - BUILDING.h / 2) }; updateBuildUI();
+});
+$('cancel-build').addEventListener('click', () => { placement = null; updateBuildUI(); });
+$('confirm-build').addEventListener('click', () => {
+  const game = world.construction;
+  if (zoom < 4) return;
+  const success = game.ship ? placeBuilding(world, game, placement) : land(world, game);
+  if (success) { placement = null; changed(); updateBuildUI(); saveCurrent(); }
+});
+$('view-ship').addEventListener('click', () => {
+  const ship = world.construction.ship; camera = { x: ship.x + ship.w / 2, y: ship.y + ship.h / 2 };
+  setZoom(Math.min(16, width / 60)); changed();
+});
+function drawConstruction(left, top) {
+  const game = world.construction;
+  if (!game) return;
+  function rectangle(rect, fill, stroke, progress = 1, preview = false) {
+    const sx = (rect.x - left) * zoom, sy = (rect.y - top) * zoom;
+    const w = Math.max(rect.w * zoom, rect.w === SHIP.w ? 10 : 7), h = Math.max(rect.h * zoom, 7);
+    if (sx + w < 0 || sx > width || sy + h < 0 || sy > height) return;
+    ctx.save(); ctx.lineWidth = preview ? 2 : 1.5;
+    ctx.fillStyle = fill; ctx.fillRect(sx, sy + h * (1 - progress), w, h * progress);
+    ctx.strokeStyle = stroke; if (preview || progress < 1) ctx.setLineDash([5, 4]);
+    ctx.strokeRect(sx, sy, w, h); ctx.restore();
+    if (rect.w === SHIP.w && zoom < 1) { ctx.fillStyle = '#f3f1df'; ctx.font = '10px monospace'; ctx.fillText('SHIP', sx + 14, sy + 8); }
+    if (rect.w === BUILDING.w && zoom >= 4 && progress < 1 && !preview) {
+      ctx.fillStyle = '#e1f4f6'; ctx.font = '11px monospace'; ctx.fillText(`${Math.floor(progress * 100)}%`, sx, sy - 5);
+    }
+  }
+  if (game.ship) rectangle(game.ship, '#8c8f92', '#d1d4d5');
+  for (const site of game.sites) rectangle(site, site.progress === 1 ? '#7e8990' : '#98a7ad', site.progress === 1 ? '#c6d0d3' : '#b3e8f3', site.progress);
+  const ghost = !game.ship ? { ...game.pending, ...SHIP } : placement ? { ...placement, ...BUILDING } : null;
+  if (ghost) { const valid = canPlace(game, ghost); rectangle(ghost, valid ? '#c5e0df55' : '#d3706355', valid ? '#e2f0df' : '#f4a38e', 1, true); }
+  const d = game.drone;
+  if (d && d.stage !== 'idle') {
+    const sx = (d.x - left) * zoom, sy = (d.y - top) * zoom, r = Math.max(4, Math.min(7, zoom * .4));
+    if (sx > -10 && sx < width + 10 && sy > -10 && sy < height + 10) {
+      ctx.fillStyle = '#f0d18a'; ctx.strokeStyle = '#35404a'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(sx,sy-r);ctx.lineTo(sx+r,sy);ctx.lineTo(sx,sy+r);ctx.lineTo(sx-r,sy);ctx.closePath();ctx.fill();ctx.stroke();
+    }
+  }
+}
 function updateStats() {
-  $('world-stats').textContent = `Seed: ${world.settings.seed}\nPatch size: ${world.settings.scale} m\nNoise layers: ${world.settings.detail}\nTree amount: ${world.settings.density} / 100`;
+  const biome = world.isGrassland(camera.x, camera.y) ? 'Grasslands' : 'Woodland';
+  $('world-stats').textContent = `${biome}\nSeed: ${world.settings.seed}\nPatch size: ${world.settings.scale} m\nNoise layers: ${world.settings.detail}\nTree amount: ${world.settings.density} / 100`;
   $('world-stats').style.whiteSpace = 'pre-wrap';
 }
 function overviewChunk(cx, cy, step) {
@@ -211,16 +306,17 @@ function overviewChunk(cx, cy, step) {
   const start = performance.now(), raster = document.createElement('canvas'); raster.width = raster.height = 32;
   const c = raster.getContext('2d'), pixels = c.createImageData(32, 32);
   for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
-    let cover = 0, field = 0;
+    let cover = 0, field = 0, meadowCover = 0;
     for (const [ox, oy] of [[.25,.25],[.75,.25],[.25,.75],[.75,.75]]) {
-      const f = world.field((cx * 32 + x + ox) * step, (cy * 32 + y + oy) * step);
+      const wx = (cx * 32 + x + ox) * step, wy = (cy * 32 + y + oy) * step;
+      const f = world.field(wx, wy), meadow = world.isGrassland(wx, wy);
       const t = Math.max(0, Math.min(1, (f - .27) / .43));
-      field += f / 4; cover += t * t * (3 - 2 * t) * world.settings.density / 100 * .92 / 4;
+      field += f / 4; meadowCover += meadow ? .25 : 0; cover += meadow ? 0 : t * t * (3 - 2 * t) * world.settings.density / 100 * .92 / 4;
     }
     const i = (y * 32 + x) * 4;
-    pixels.data[i] = 148 - field * 22 - cover * 65;
-    pixels.data[i+1] = 161 - field * 18 - cover * 58;
-    pixels.data[i+2] = 103 - field * 17 - cover * 28; pixels.data[i+3] = 255;
+    pixels.data[i] = 148 - field * 22 - cover * 65 + meadowCover * 20;
+    pixels.data[i+1] = 161 - field * 18 - cover * 58 + meadowCover * 15;
+    pixels.data[i+2] = 103 - field * 17 - cover * 28 + meadowCover * 10; pixels.data[i+3] = 255;
   }
   c.putImageData(pixels, 0, 0); overviews.set(key, raster); overviewBuildMs += performance.now() - start;
   if (overviews.size > 64) { const oldest = overviews.keys().next().value, old = overviews.get(oldest); old.width = old.height = 0; overviews.delete(oldest); }
@@ -228,6 +324,11 @@ function overviewChunk(cx, cy, step) {
 }
 function draw(now) {
   requestAnimationFrame(draw);
+  if (active) {
+    if (simulationAt && advanceConstruction(world.construction, Math.max(0, (now - simulationAt) / 1000))) changed();
+    simulationAt = now;
+    if (dirty && now-lastSaved > 1000 && (now-lastChanged > 500 || now-lastSaved > 5000)) saveCurrent();
+  }
   if (screen !== 'viewport') return;
   const start = performance.now();
   if (renderedStateRevision !== world.state.revision) {
@@ -259,13 +360,17 @@ function draw(now) {
   for(let y=Math.ceil(top/8)*8;y<=bottom;y+=8){const sy=Math.round((y-top)*zoom)+.5;ctx.moveTo(0,sy);ctx.lineTo(width,sy);}
   ctx.stroke();
   }
+  drawConstruction(left, top);
   frameCount++; frameMs += performance.now()-start;
-  if(now-statsAt>250){$('position').textContent=`X ${Math.floor(camera.x)} · Y ${Math.floor(camera.y)}`;updateStats();statsAt=now;}
+  if(now-statsAt>250){$('position').textContent=`X ${Math.floor(camera.x)} · Y ${Math.floor(camera.y)}`;updateStats();updateBuildUI();statsAt=now;}
   if (dirty && now-lastSaved > 1000 && (now-lastChanged > 500 || now-lastSaved > 5000)) saveCurrent();
 }
 
 // Read-only diagnostics for reproducible, bounded verification.
 window.woodland = Object.freeze({
+  get construction(){return world?.construction ? structuredClone(world.construction) : null;},
+  get generator(){return world?.generator;},
+  get placement(){return placement ? {...placement} : null;},
   get settings(){return world ? {...world.settings} : null;},
   get screen(){return screen;},
   get name(){return active?.name;},
@@ -273,5 +378,5 @@ window.woodland = Object.freeze({
   get metrics(){return {frames:frameCount,meanWorkMs:frameMs/Math.max(1,frameCount),dataChunks:world?.chunks.size || 0,rasterChunks:rasters.size,visibleChunks,zoom,overviewCells,overviewChunks,overviewCache:overviews.size,overviewBuildMs,spanMetres:width/zoom,mode:detailView()?'detail':'overview'};},
   tile:(x,y)=>world.tile(x,y),
 });
-for (const key of Object.keys(DEFAULTS)) $(key).value = DEFAULTS[key];
+for (const key of ['scale', 'detail', 'density']) $(key).value = DEFAULTS[key];
 labels();showScreen('menu');requestAnimationFrame(draw);
