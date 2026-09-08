@@ -266,6 +266,45 @@ $('view-ship').addEventListener('click', () => {
   const ship = world.construction.ship; camera = { x: ship.x + ship.w / 2, y: ship.y + ship.h / 2 };
   setZoom(Math.min(16, width / 60)); changed();
 });
+function drawShipDetails(ship, drone, left, top) {
+  if (zoom < 3) return;
+  const sx = (ship.x - left) * zoom, sy = (ship.y - top) * zoom;
+  if (sx + ship.w * zoom < 0 || sx > width || sy + ship.h * zoom < 0 || sy > height) return;
+  ctx.save(); ctx.translate(sx, sy); ctx.scale(zoom, zoom); ctx.lineWidth = 1 / zoom;
+  // Broad roof plates retain the continuous, rectangular 40 × 12 m hull.
+  ctx.fillStyle = '#a5abae'; ctx.fillRect(.15, .15, 39.7, .35);
+  ctx.fillStyle = '#646e75'; ctx.fillRect(.15, 11.5, 39.7, .35);
+  ctx.fillStyle = '#949da3'; ctx.fillRect(7, 5.4, 26, 1.2);
+  for (const [x, w] of [[7.5,7],[25.5,6.5]]) for (const y of [1.3,7]) {
+    ctx.fillStyle = '#9ba3a7'; ctx.fillRect(x,y,w,3.7);
+    ctx.strokeStyle = '#707d85'; ctx.strokeRect(x,y,w,3.7);
+  }
+  // Two large engine housings at the stern; no exhaust while landed.
+  for (const y of [2,6.8]) {
+    ctx.fillStyle = '#59656d'; ctx.fillRect(.8,y,5.7,3.2);
+    ctx.fillStyle = '#3b474f'; ctx.fillRect(1.2,y+.4,1.4,2.4);
+    ctx.fillStyle = '#77848c'; ctx.fillRect(3,y+.4,3.1,2.4);
+    ctx.strokeStyle = '#b0b9bd'; ctx.strokeRect(.8,y,5.7,3.2);
+  }
+  // Cockpit at the bow, kept inside the collision footprint.
+  ctx.fillStyle = '#697780'; ctx.beginPath();
+  ctx.moveTo(33,1.5);ctx.lineTo(37.8,1.5);ctx.lineTo(39.2,3);ctx.lineTo(39.2,9);ctx.lineTo(37.8,10.5);ctx.lineTo(33,10.5);ctx.closePath();ctx.fill();
+  ctx.fillStyle = '#60818d';ctx.beginPath();
+  ctx.moveTo(34.5,2.4);ctx.lineTo(37.5,2.4);ctx.lineTo(38.4,3.5);ctx.lineTo(38.4,8.5);ctx.lineTo(37.5,9.6);ctx.lineTo(34.5,9.6);ctx.closePath();ctx.fill();
+  ctx.strokeStyle = '#b6cbd0';ctx.stroke();
+  ctx.strokeStyle = '#40565f';ctx.beginPath();ctx.moveTo(34.5,6);ctx.lineTo(38.4,6);ctx.stroke();
+  // This roof bay is centred on the drone's real departure/return coordinates.
+  const distance = drone ? Math.hypot(drone.x - ship.x - ship.w / 2, drone.y - ship.y - ship.h / 2) : Infinity;
+  const openness = drone?.stage === 'outbound' ? Math.max(0,1-distance/8) : drone?.stage === 'returning' ? Math.max(0,1-distance/12) : 0;
+  ctx.fillStyle = '#4c5a63';ctx.fillRect(16.2,2.5,7.6,7);
+  ctx.fillStyle = '#273640';ctx.fillRect(16.7,3,6.6,6);
+  const doorWidth = 3.3 * (1-openness);
+  ctx.fillStyle = '#a1acb3';ctx.fillRect(16.7,3,doorWidth,6);ctx.fillRect(23.3-doorWidth,3,doorWidth,6);
+  ctx.strokeStyle = '#bdcbd0';ctx.strokeRect(16.2,2.5,7.6,7);
+  ctx.strokeStyle = '#5b707c';ctx.beginPath();ctx.moveTo(16.7+doorWidth,3);ctx.lineTo(16.7+doorWidth,9);ctx.moveTo(23.3-doorWidth,3);ctx.lineTo(23.3-doorWidth,9);ctx.stroke();
+  ctx.restore();
+  if (zoom >= 10) { ctx.save();ctx.fillStyle = '#e1e5e4';ctx.font = '10px monospace';ctx.fillText('DRONE BAY',sx+17.1*zoom,sy+2*zoom);ctx.restore(); }
+}
 function drawConstruction(left, top) {
   const game = world.construction;
   if (!game) return;
@@ -282,7 +321,7 @@ function drawConstruction(left, top) {
       ctx.fillStyle = '#e1f4f6'; ctx.font = '11px monospace'; ctx.fillText(`${Math.floor(progress * 100)}%`, sx, sy - 5);
     }
   }
-  if (game.ship) rectangle(game.ship, '#8c8f92', '#d1d4d5');
+  if (game.ship) { rectangle(game.ship, '#8c8f92', '#d1d4d5'); drawShipDetails(game.ship, game.drone, left, top); }
   for (const site of game.sites) rectangle(site, site.progress === 1 ? '#7e8990' : '#98a7ad', site.progress === 1 ? '#c6d0d3' : '#b3e8f3', site.progress);
   const ghost = !game.ship ? { ...game.pending, ...SHIP } : placement ? { ...placement, ...BUILDING } : null;
   if (ghost) { const valid = canPlace(game, ghost); rectangle(ghost, valid ? '#c5e0df55' : '#d3706355', valid ? '#e2f0df' : '#f4a38e', 1, true); }
