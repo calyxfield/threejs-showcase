@@ -33,7 +33,7 @@ export function perlin(x, y, seed) {
 // This initial layer stores sparse tile overrides. Future factory entities and their
 // simulation scheduler belong here/alongside it, never in viewport-owned chunks.
 export class WorldState {
-  constructor() { this.edits = new Map(); this.revision = 0; }
+  constructor() { this.edits = new Map(); this.revision = 0; this.chunkRevisions = new Map(); }
   setTile(x, y, value) {
     x = Math.floor(x); y = Math.floor(y);
     const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE);
@@ -47,7 +47,7 @@ export class WorldState {
       if (!this.edits.has(key)) this.edits.set(key, new Map());
       this.edits.get(key).set(index, value);
     }
-    this.revision++;
+    this.revision++; this.chunkRevisions.set(key,this.revision);
   }
   chunkEdits(cx, cy) { return this.edits.get(`${cx},${cy}`); }
 }

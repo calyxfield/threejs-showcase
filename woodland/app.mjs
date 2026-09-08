@@ -1,6 +1,6 @@
 import { World, CHUNK_SIZE, DEFAULTS, hash, CURRENT_GENERATOR } from './world.mjs';
 import { readSaves, writeSave, encodeSave, decodeState } from './saves.mjs';
-import { SHIP, BUILDING, MAX_SITES, newConstruction, canPlace, land, placeBuilding, advanceConstruction } from './construction.mjs';
+import { SHIP, BUILDING, MAX_SITES, MAX_JOBS, hasEditRoom, selectTrees, orderCuts, newConstruction, canPlace, land, placeBuilding, advanceConstruction } from './construction.mjs';
 
 const $ = id => document.getElementById(id);
 const canvas = $('world'), ctx = canvas.getContext('2d', { alpha: false });
@@ -8,7 +8,7 @@ const form = $('settings');
 const RASTER_TILE = 16, RASTER_LIMIT = 64;
 const rasters = new Map(), overviews = new Map(), keys = new Set();
 let active = null, screen = 'menu', dirty = false, lastSaved = 0, lastChanged = 0;
-let placement = null, simulationAt = 0;
+let placement = null, cutting = false, selection = null, orderError = '', simulationAt = 0;
 let overviewCells = 0, overviewChunks = 0, overviewBuildMs = 0;
 let world, camera, width = 1, height = 1, zoom = 30, last = 0, drag = null;
 let visibleChunks = 0, frameCount = 0, frameMs = 0, statsAt = 0;
@@ -57,8 +57,8 @@ function changed() {
 }
 function openWorld(save) {
   world = new World(save.settings, 96, decodeState(save), save.generator);
-  world.construction = save.version === 2 ? structuredClone(save.construction) : null;
-  placement = null; simulationAt = performance.now();
+  world.construction = save.version >= 2 ? structuredClone(save.construction) : null;
+  placement = null; cutting = false; selection = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
   active = { id: save.id, name: save.name }; camera = { ...save.camera }; zoom = save.zoom;
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
   dirty = false; $('world-title').textContent = active.name;
@@ -102,7 +102,7 @@ form.addEventListener('submit', event => {
   event.preventDefault();
   if (active && dirty && !saveCurrent()) { showScreen('menu'); return; }
   world = new World(settings(), 96, undefined, CURRENT_GENERATOR); world.construction = newConstruction();
-  camera = { x: 0, y: 0 }; zoom = Math.min(16, innerWidth / 60); placement = null; simulationAt = performance.now();
+  camera = { x: 0, y: 0 }; zoom = Math.min(16, innerWidth / 60); placement = null; cutting = false; selection = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
   active = { id: crypto.randomUUID(), name: $('world-name').value.trim() || world.settings.seed || 'Untitled world' };
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
   $('world-title').textContent = active.name; dirty = true; showScreen('viewport'); updateBuildUI(); saveCurrent();
@@ -141,12 +141,14 @@ canvas.addEventListener('pointerdown', event => {
   canvas.focus({ preventScroll: true });
   canvas.setPointerCapture(event.pointerId);
   drag = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false };
-  canvas.classList.add('dragging');
+  if (cutting) { drag.anchor = mapTile(event.clientX,event.clientY); updateSelection(event.clientX,event.clientY); }
+  else canvas.classList.add('dragging');
 });
 canvas.addEventListener('pointermove', event => {
   if (!drag || event.pointerId !== drag.id) return;
   if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <= 6) return;
   drag.moved = true;
+  if (cutting) { updateSelection(event.clientX,event.clientY); return; }
   camera.x -= (event.clientX - drag.x) / zoom;
   camera.y -= (event.clientY - drag.y) / zoom;
   drag.x = event.clientX; drag.y = event.clientY; changed();
@@ -157,12 +159,14 @@ function stopDrag() {
 }
 for (const type of ['pointerup','pointercancel','lostpointercapture']) canvas.addEventListener(type, event => {
   if (drag && event.pointerId === drag.id) {
-    if (type === 'pointerup' && !drag.moved) selectSite(event.clientX, event.clientY);
+    if (type === 'pointerup') { if (cutting) updateSelection(event.clientX,event.clientY); else if (!drag.moved) selectSite(event.clientX,event.clientY); }
+    else if (cutting && type === 'pointercancel') selection = null;
     stopDrag();
   }
 });
 const movementKeys = new Set(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright']);
 window.addEventListener('keydown', event => {
+  if (screen === 'viewport' && event.key === 'Escape') { cancelTool(); return; }
   if (screen !== 'viewport' || event.target.matches('input, textarea') || !movementKeys.has(event.key.toLowerCase())) return;
   event.preventDefault(); keys.add(event.key.toLowerCase());
 });
@@ -181,7 +185,9 @@ for (const button of document.querySelectorAll('[data-dir]')) {
 function rasterChunk(cx, cy) {
   const key = `${cx},${cy}`;
   if (rasters.has(key)) {
-    const raster = rasters.get(key); rasters.delete(key); rasters.set(key, raster); return raster;
+    const raster = rasters.get(key); rasters.delete(key);
+    if (raster.editRevision === (world.state.chunkRevisions.get(key) || 0)) { rasters.set(key, raster); return raster; }
+    raster.width = raster.height = 0;
   }
   const data = world.chunk(cx, cy), edits = world.state.chunkEdits(cx,cy), raster = document.createElement('canvas');
   raster.width = raster.height = CHUNK_SIZE * RASTER_TILE;
@@ -204,6 +210,7 @@ function rasterChunk(cx, cy) {
       c.fillStyle = '#bdd18a55'; c.fillRect(px+5,py+3,2,1);
     }
   }
+  raster.editRevision = world.state.chunkRevisions.get(key) || 0;
   rasters.set(key, raster);
   if (rasters.size > RASTER_LIMIT) {
     const oldest = rasters.keys().next().value;
@@ -220,6 +227,7 @@ function pan(dt) {
   camera.x += dx * distance; camera.y += dy * distance; changed();
 }
 function selectSite(clientX, clientY) {
+  orderError = '';
   const game = world.construction;
   if (!game || (game.ship && !placement)) return;
   const bounds = canvas.getBoundingClientRect(), size = game.ship ? BUILDING : SHIP;
@@ -228,39 +236,61 @@ function selectSite(clientX, clientY) {
   else placement = position;
   updateBuildUI();
 }
+function mapTile(clientX, clientY) {
+  const bounds = canvas.getBoundingClientRect();
+  return { x: Math.floor(camera.x + (clientX-bounds.left-width/2)/zoom), y: Math.floor(camera.y + (clientY-bounds.top-height/2)/zoom) };
+}
+function updateSelection(x,y) {
+  selection = detailView() ? selectTrees(world,world.construction,drag.anchor,mapTile(x,y)) : {trees:[],error:'Zoom in to select individual trees.'};
+  updateBuildUI();
+}
+function cancelTool() { orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
 function updateBuildUI() {
+  document.querySelector('.controls span').textContent = cutting ? 'Drag to select trees' : 'Drag to pan';
+  canvas.setAttribute('aria-label', cutting ? 'Top-down world map. Tap a tree or drag to select trees, then confirm the order. W A S D or arrow keys pan. Escape cancels selection.' : 'Top-down world map. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or plus and minus buttons.');
   const game = world?.construction;
   $('build-panel').hidden = !game;
   if (!game) return;
-  const landing = !game.ship;
-  $('build-title').textContent = landing ? 'Choose a landing site' : placement ? 'Building blueprint' : 'Construction';
-  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : placement ? '6 × 6 tiles. Tap a site, then place. The drone builds blueprints in order.' : 'Place a blueprint for the ship’s drone to construct.';
-  const rect = landing ? { ...game.pending, ...SHIP } : placement ? { ...placement, ...BUILDING } : null;
-  const valid = rect && canPlace(game, rect) && zoom >= 4;
-  $('confirm-build').hidden = !rect;
-  $('confirm-build').textContent = landing ? 'Land here' : 'Place blueprint';
-  $('confirm-build').disabled = !valid;
-  $('cancel-build').hidden = !placement;
-  $('start-build').hidden = landing || !!placement;
-  $('start-build').disabled = game.sites.length >= MAX_SITES;
+  const landing = !game.ship, rect = landing ? {...game.pending,...SHIP} : placement ? {...placement,...BUILDING} : null;
+  const valid = rect && canPlace(game,rect) && zoom >= 4;
+  $('build-title').textContent = landing ? 'Choose a landing site' : cutting ? 'Cut trees' : placement ? 'Building blueprint' : 'Drone orders';
+  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : cutting ? 'Tap a tree or drag a box, then confirm. Up to 128 trees / 4,096 tiles per order. WASD / arrows pan.' : placement ? '6 × 6 tiles. Tap a site, then place. Build and cut orders share one queue.' : 'Place a building blueprint or mark trees for the ship’s drone.';
+  $('confirm-build').hidden = !rect && !cutting;
+  $('confirm-build').textContent = landing ? 'Land here' : cutting ? `Order cutting${selection?.trees.length ? ' ('+selection.trees.length+')' : ''}` : 'Place blueprint';
+  $('confirm-build').disabled = cutting ? !detailView() || !selection?.trees.length || !!selection.error : !valid || (!landing && (game.jobs.length >= MAX_JOBS || game.sites.length >= MAX_SITES));
+  $('cancel-build').hidden = !placement && !cutting;
+  $('start-build').hidden = landing || !!placement || cutting;
+  $('start-cut').hidden = landing || !!placement || cutting;
+  $('start-build').disabled = game.sites.length >= MAX_SITES || game.jobs.length >= MAX_JOBS;
   $('view-ship').hidden = landing;
   let status = '';
-  if (rect) status = zoom < 4 ? 'Zoom in to choose exact tiles.' : valid ? `Site X ${rect.x} · Y ${rect.y}` : 'This footprint overlaps the ship or a building.';
+  if (cutting) status = !detailView() ? 'Zoom in to select individual trees.' : selection?.error || (selection ? `${selection.trees.length} ${selection.trees.length === 1 ? 'tree' : 'trees'} marked · ${game.jobs.length} jobs queued` : 'Select trees. Dragging marks an area in this tool.');
+  else if (rect) status = zoom < 4 ? 'Zoom in to choose exact tiles.' : valid ? `Site X ${rect.x} · Y ${rect.y}` : 'This footprint overlaps the ship or a building.';
   else {
-    const d = game.drone, queue = game.sites.length - game.cursor;
-    status = d.stage === 'building' ? `Drone building ${Math.floor(game.sites[game.cursor].progress * 100)}% · ${queue} remaining` : d.stage === 'outbound' ? `Drone flying to blueprint · ${queue} remaining` : d.stage === 'returning' ? `Drone returning · ${queue} queued` : `${game.cursor} complete · Drone ready`;
+    const d = game.drone, job = game.jobs[0], queue = game.jobs.length;
+    const progress = job?.kind === 'build' ? game.sites[job.site].progress : job?.progress;
+    status = ['building','cutting'].includes(d.stage) ? `Drone ${d.stage} ${Math.floor(progress*100)}% · ${queue} remaining` : d.stage === 'outbound' ? `Flying to ${job.kind === 'cut' ? 'tree' : 'blueprint'} · ${queue} remaining` : d.stage === 'returning' ? `Drone returning · ${queue} queued` : `${game.cursor} buildings complete · Drone ready`;
+    if (queue >= MAX_JOBS) status += ` · Queue limit ${MAX_JOBS}`;
   }
-  $('build-status').textContent = status;
+  $('build-status').textContent = orderError || status;
 }
 $('start-build').addEventListener('click', () => {
-  placement = { x: Math.floor(camera.x - BUILDING.w / 2), y: Math.floor(camera.y - BUILDING.h / 2) }; updateBuildUI();
+  cancelTool(); placement = { x: Math.floor(camera.x - BUILDING.w/2), y: Math.floor(camera.y - BUILDING.h/2) }; updateBuildUI();
 });
-$('cancel-build').addEventListener('click', () => { placement = null; updateBuildUI(); });
+$('start-cut').addEventListener('click', () => { cancelTool(); cutting = true; canvas.classList.add('selecting'); updateBuildUI(); });
+$('cancel-build').addEventListener('click', cancelTool);
 $('confirm-build').addEventListener('click', () => {
   const game = world.construction;
   if (zoom < 4) return;
-  const success = game.ship ? placeBuilding(world, game, placement) : land(world, game);
-  if (success) { placement = null; changed(); updateBuildUI(); saveCurrent(); }
+  if (cutting) {
+    if (!detailView()) return;
+    const result = orderCuts(world,game,selection?.trees);
+    if (result.error) { selection = {...selection,error:result.error}; updateBuildUI(); return; }
+    cancelTool(); changed(); saveCurrent(); return;
+  }
+  if (!hasEditRoom(world,game,{...(game.ship ? placement : game.pending),...(game.ship ? BUILDING : SHIP)})) { orderError = 'This world has reached its tree-clearing limit.'; updateBuildUI(); return; }
+  const success = game.ship ? placeBuilding(world,game,placement) : land(world,game);
+  if (success) { cancelTool(); changed(); saveCurrent(); }
 });
 $('view-ship').addEventListener('click', () => {
   const ship = world.construction.ship; camera = { x: ship.x + ship.w / 2, y: ship.y + ship.h / 2 };
@@ -305,7 +335,7 @@ function drawShipDetails(ship, drone, left, top) {
 function drawConstruction(left, top) {
   const game = world.construction;
   if (!game) return;
-  function rectangle(rect, fill, stroke, progress = 1, preview = false) {
+  function rectangle(rect, fill, stroke, progress = 1, preview = false, shipMarker = false) {
     const sx = (rect.x - left) * zoom, sy = (rect.y - top) * zoom;
     const w = Math.max(rect.w * zoom, rect.w === SHIP.w ? 10 : 7), h = Math.max(rect.h * zoom, 7);
     if (sx + w < 0 || sx > width || sy + h < 0 || sy > height) return;
@@ -313,15 +343,28 @@ function drawConstruction(left, top) {
     ctx.fillStyle = fill; ctx.fillRect(sx, sy + h * (1 - progress), w, h * progress);
     ctx.strokeStyle = stroke; if (preview || progress < 1) ctx.setLineDash([5, 4]);
     ctx.strokeRect(sx, sy, w, h); ctx.restore();
-    if (rect.w === SHIP.w && zoom < 1) { ctx.fillStyle = '#f3f1df'; ctx.font = '10px monospace'; ctx.fillText('SHIP', sx + 14, sy + 8); }
+    if (shipMarker && zoom < 1) { ctx.fillStyle = '#f3f1df'; ctx.font = '10px monospace'; ctx.fillText('SHIP', sx + 14, sy + 8); }
     if (rect.w === BUILDING.w && zoom >= 4 && progress < 1 && !preview) {
       ctx.fillStyle = '#e1f4f6'; ctx.font = '11px monospace'; ctx.fillText(`${Math.floor(progress * 100)}%`, sx, sy - 5);
     }
   }
-  if (game.ship) { rectangle(game.ship, '#8c8f92', '#d1d4d5'); drawShipDetails(game.ship, game.drone, left, top); }
+  if (game.ship) { rectangle(game.ship, '#8c8f92', '#d1d4d5', 1, false, true); drawShipDetails(game.ship, game.drone, left, top); }
   for (const site of game.sites) rectangle(site, site.progress === 1 ? '#7e8990' : '#98a7ad', site.progress === 1 ? '#c6d0d3' : '#b3e8f3', site.progress);
   const ghost = !game.ship ? { ...game.pending, ...SHIP } : placement ? { ...placement, ...BUILDING } : null;
   if (ghost) { const valid = canPlace(game, ghost); rectangle(ghost, valid ? '#c5e0df55' : '#d3706355', valid ? '#e2f0df' : '#f4a38e', 1, true); }
+  function treeMark(tree, color, progress = 0) {
+    const sx = (tree.x+.5-left)*zoom, sy = (tree.y+.5-top)*zoom, r = Math.max(4,zoom*.64);
+    if (sx+r<0 || sx-r>width || sy+r<0 || sy-r>height) return;
+    ctx.save();ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(sx,sy,r,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(sx-3,sy-3);ctx.lineTo(sx+3,sy+3);ctx.moveTo(sx+3,sy-3);ctx.lineTo(sx-3,sy+3);ctx.stroke();
+    if (progress>0) {ctx.lineWidth=3;ctx.beginPath();ctx.arc(sx,sy,r+3,-Math.PI/2,-Math.PI/2+progress*Math.PI*2);ctx.stroke();}
+    ctx.restore();
+  }
+  for (const job of game.jobs) if (job.kind === 'cut') treeMark(job,'#f5c773',job.progress);
+  if (cutting && selection) {
+    if (selection.rect) rectangle(selection.rect,selection.error?'#d3706322':'#f4df9a19',selection.error?'#efa18b':'#f6e5a5',1,true);
+    for (const tree of selection.trees) treeMark(tree,'#fff5c8');
+  }
   const d = game.drone;
   if (d && d.stage !== 'idle') {
     const sx = (d.x - left) * zoom, sy = (d.y - top) * zoom, r = Math.max(4, Math.min(7, zoom * .4));
@@ -361,14 +404,14 @@ function overviewChunk(cx, cy, step) {
 function draw(now) {
   requestAnimationFrame(draw);
   if (active) {
-    if (simulationAt && advanceConstruction(world.construction, Math.max(0, (now - simulationAt) / 1000))) changed();
+    if (simulationAt && advanceConstruction(world.construction, Math.max(0, (now - simulationAt) / 1000), world)) changed();
     simulationAt = now;
     if (dirty && now-lastSaved > 1000 && (now-lastChanged > 500 || now-lastSaved > 5000)) saveCurrent();
   }
   if (screen !== 'viewport') return;
   const start = performance.now();
   if (renderedStateRevision !== world.state.revision) {
-    releaseRasters(); overviews.clear(); renderedStateRevision = world.state.revision; changed();
+    renderedStateRevision = world.state.revision; changed();
   }
   const dt = last ? Math.min((now-last)/1000, 0.05) : 0; last = now;
   pan(dt);
@@ -405,6 +448,8 @@ function draw(now) {
 // Read-only diagnostics for reproducible, bounded verification.
 window.woodland = Object.freeze({
   get construction(){return world?.construction ? structuredClone(world.construction) : null;},
+  get selection(){return selection ? structuredClone(selection) : null;},
+  get cutting(){return cutting;},
   get generator(){return world?.generator;},
   get placement(){return placement ? {...placement} : null;},
   get settings(){return world ? {...world.settings} : null;},
