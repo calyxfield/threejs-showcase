@@ -114,6 +114,6 @@ export class World {
     const index = (y - cy * CHUNK_SIZE) * CHUNK_SIZE + x - cx * CHUNK_SIZE;
     return this.resolveTile(x,y,this.state.chunkEdits(cx,cy)?.get(index) ?? this.chunk(cx, cy)[index]);
   }
-  resolveTile(x,y,value) { return this.farmCoverage?.isPrepared(x,y) ? value & ~8 : value; }
+  resolveTile(x,y,value) { return this.farmCoverage?.isPrepared(x,y)||this.marketContains?.(x,y) ? value & ~8 : value; }
   isTree(x, y) { return (this.tile(x, y) & 8) !== 0; }
 }

@@ -47,8 +47,8 @@
     <canvas id="world" tabindex="0" aria-label="Top-down world map. Drag with mouse or touch to pan the camera, or use W A S D or arrow keys. Zoom with the mouse wheel or the plus and minus buttons."></canvas>
     <header class="toolbar" aria-label="Map tools">
       <div class="toolbar-main">
-        <div class="map-heading"><button id="save-menu" class="map-button">Save & Menu</button><span id="world-title"></span></div>
-        <div id="ship-tools" class="build-actions"><button id="start-build">Build</button><button id="start-cut">Cut Trees</button><button id="start-farm">Farm</button><button id="view-ship" class="quiet">Go to ship</button></div>
+        <div class="map-heading"><button id="save-menu" class="map-button">Save & Menu</button><span id="world-title"></span><span id="gold-balance" hidden></span></div>
+        <div id="ship-tools" class="build-actions"><button id="start-build">Build</button><button id="start-cut">Cut Trees</button><button id="start-farm">Farm</button><button id="open-trade" class="quiet">Towns & workers</button><button id="map-toggle" class="quiet" aria-pressed="false">Map · M</button><button id="view-ship" class="quiet">Go to ship</button></div>
         <details id="view-tools" class="view-tools" open><summary>View</summary><div class="view-actions">
           <div class="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Return to one-metre detail">1:1</button><button id="zoom-in" aria-label="Zoom in">+</button></div>
           <details class="world-info"><summary>World info</summary><div class="info-content"><div id="world-stats"></div><p>The close view shows individual trees. Distant views show approximate forest cover.</p></div></details>
@@ -59,6 +59,13 @@
         <section id="build-panel" hidden><div class="context-copy"><h2 id="build-title"></h2><p id="build-help"></p></div><div class="build-actions"><span id="farm-modes" hidden><button id="farm-add" aria-pressed="true">Add</button><button id="farm-erase" aria-pressed="false">Erase</button><select id="farm-gesture" aria-label="Selection mode"><option value="rectangle" selected>Rectangle</option><option value="brush">Brush</option></select><label id="brush-controls" hidden>Width <select id="farm-brush" aria-label="Brush width"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>16</option><option>32</option><option>64</option><option>128</option><option>256</option><option>512</option><option>1024</option></select> m</label></span><button id="confirm-build">Land here</button><button id="cancel-build" class="quiet">Cancel</button></div><p id="build-status" role="status"></p></section>
         <div class="map-meta"><div class="position"><span id="position">X 0 · Y 0</span><small>m · N ↑</small></div><div id="save-status" role="status"></div></div>
       </div>
+      <section id="economy-panel" hidden aria-label="Farming and trade">
+        <div class="economy-heading"><strong id="economy-title"></strong><button id="close-economy" class="quiet">Close</button></div>
+        <div id="farm-operations" hidden><div class="economy-actions"><label>Crop <select id="crop-choice"><option value="">None</option><option value="wheat">Wheat</option><option value="corn">Corn</option></select></label><button id="apply-crop">Set crop</button><button id="edit-farm-land">Edit land</button></div><p class="economy-note">Changing crop or land restarts unharvested work. Stored harvest and cargo stay safe.</p><p id="farm-economy-status"></p></div>
+        <div class="economy-actions"><label>Town <select id="town-choice"></select></label><button id="view-town">Go to town</button><button id="hire-worker">Hire worker</button><span id="town-prices"></span></div>
+        <div class="economy-actions"><label>Worker <select id="worker-choice"></select></label><label>Job <select id="worker-job"><option value="farm">Farm</option><option value="delivery">Deliver crops</option><option value="idle">Unassigned</option></select></label><label>Farm <select id="worker-farm"></select></label><button id="assign-worker">Assign & repeat</button></div>
+        <p id="worker-state"></p><p id="payroll-policy"></p><p id="departure-notice" hidden></p><p id="economy-message" role="status"></p>
+      </section>
     </header>
     <div class="map-bottom"><div class="legend"><span id="scale-label">1 SQUARE = 1 m</span><span id="view-span"></span><div class="scale-line" id="scale-line"></div><small id="scale-distance">5 m</small></div></div>
     <div class="controls"><span>Drag to pan</span><span><kbd>W A S D</kbd> / arrows pan</span><span>Scroll to zoom</span></div>

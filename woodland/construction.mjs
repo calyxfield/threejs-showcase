@@ -1,4 +1,4 @@
-import {validateFarms,coverageIntersectsRect,farmPlacementError,coverageArea,bindFarms,FARM_RATE,combineCoverage,preparedCoverage,patchCoverage} from './farms.mjs';
+import {validateFarms,coverageIntersectsRect,farmPlacementError,coverageArea,bindFarms,FARM_RATE,combineCoverage,preparedCoverage,patchCoverage,reservations,workerReservations} from './farms.mjs';
 export const SHIP = Object.freeze({ w: 40, h: 12 });
 export const BUILDING = Object.freeze({ w: 6, h: 6 });
 export const BUILD_SECONDS = 6;
@@ -103,7 +103,7 @@ export function orderCuts(world, game, trees) {
 }
 export function canPlace(game, rect) {
   if (!grid(rect)) return false;
-  return (!game.ship || !overlaps(game.ship, rect)) && !game.sites.some(site => overlaps(site, rect)) && !(game.farms||[]).some(f=>coverageIntersectsRect(f.coverage,rect));
+  return !(workerReservations.get(game)||[]).some(w=>overlaps({x:w.x-1,y:w.y-1,w:2,h:2},rect)) && (!game.ship || !overlaps(game.ship, rect)) && ![...game.sites,...(reservations.get(game)||[])].some(site => overlaps(site, rect)) && !(game.farms||[]).some(f=>coverageIntersectsRect(f.coverage,rect));
 }
 // Reserve pending cut edits too, so later footprints cannot exhaust save capacity.
 export function hasEditRoom(world, game, rect = null, additional = []) {
@@ -125,7 +125,7 @@ export function clearFootprint(world, rect) {
   }
 }
 export function land(world, game) {
-  if (game.ship || !grid(game.pending) || !hasEditRoom(world,game,{...game.pending,...SHIP})) return false;
+  if (game.ship || !grid(game.pending) || !canPlace(game,{...game.pending,...SHIP}) || !hasEditRoom(world,game,{...game.pending,...SHIP})) return false;
   game.ship = { ...game.pending, ...SHIP }; game.pending = null;
   clearFootprint(world, game.ship);
   game.drone = { x: game.ship.x + SHIP.w / 2, y: game.ship.y + SHIP.h / 2, stage: 'idle' };
@@ -137,7 +137,7 @@ export function placeBuilding(world, game, position) {
   clearFootprint(world, rect); game.sites.push({ ...rect, progress: 0 }); game.jobs.push({kind:'build',site:game.sites.length-1}); return true;
 }
 export function controllerCanPlace(game,rect,farmId=null){
- return grid(rect)&&(!game.ship||!overlaps(game.ship,rect))&&!game.sites.some(s=>overlaps(s,rect))&&!game.farms.some(f=>f.id!==farmId&&coverageIntersectsRect(f.coverage,rect));
+ return grid(rect)&&!(workerReservations.get(game)||[]).some(w=>overlaps({x:w.x-1,y:w.y-1,w:2,h:2},rect))&&(!game.ship||!overlaps(game.ship,rect))&&![...game.sites,...(reservations.get(game)||[])].some(s=>overlaps(s,rect))&&!game.farms.some(f=>f.id!==farmId&&coverageIntersectsRect(f.coverage,rect));
 }
 export function placeController(world,game,position,farmId=null){
  const rect={...position,...BUILDING};let farm=game.farms.find(f=>f.id===farmId);

@@ -1,3 +1,4 @@
+export const reservations = new WeakMap(), workerReservations = new WeakMap();
 export const MAX_FARMS=64,MAX_FARM_TILES=1048576,MAX_FARM_CHUNKS=4096,FARM_RATE=256;
 export const popcount=n=>{n-=n>>>1&0x55555555;n=(n&0x33333333)+(n>>>2&0x33333333);return (((n+(n>>>4))&0x0f0f0f0f)*0x01010101)>>>24;};
 const bits=(a,b)=>((0xffffffff>>>a)<<(a) & (b===32?0xffffffff:(2**b-1)))>>>0;
@@ -63,7 +64,7 @@ export function farmPlacementError(game,coverage,id=null){
  for(const f of others){reserved=combineCoverage(reserved,f.coverage);occupied=combineCoverage(occupied,f.coverage);}
  reserved=combineCoverage(reserved,coverage);
  if(coverageLimit(reserved))return 'Land limit: 1,048,576 tiles, including prepared ground. Keep scattered fields within 4,096 regions.';
- if(coverageIntersectsRect(coverage,game.ship)||game.sites.some(s=>coverageIntersectsRect(coverage,s)))return 'Allotment overlaps the ship or a building.';
+ if(coverageIntersectsRect(coverage,game.ship)||[...game.sites,...(reservations.get(game)||[])].some(s=>coverageIntersectsRect(coverage,s)))return 'Allotment overlaps the ship or a building.';
  if(coverageArea(combineCoverage(coverage,occupied,true))!==coverageArea(coverage))return 'These tiles already belong to another farm.';
  return '';
 }

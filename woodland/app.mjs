@@ -1,3 +1,4 @@
+import {BALANCE,CROPS,HIRING,newEconomy,bindEconomy,ensureTowns,farmEconomy,hireWorker,assignWorker,setCrop,restartCrop,advanceEconomy} from './economy.mjs';
 import {brushCoverage,patchCoverage,coverageContains,coverageArea,farmPlacementError,compileCoverage,preparedRow,bindFarms} from './farms.mjs';
 import { World, CHUNK_SIZE, DEFAULTS, hash, CURRENT_GENERATOR } from './world.mjs';
 import { readSaves, writeSave, encodeSave, decodeState } from './saves.mjs';
@@ -8,6 +9,9 @@ const canvas = $('world'), ctx = canvas.getContext('2d', { alpha: false });
 const form = $('settings');
 const RASTER_TILE = 16, RASTER_LIMIT = 64;
 const rasters = new Map(), overviews = new Map(), keys = new Set();
+let economySelection=null,economyListStamp='',detailReturn=null,mapHits=[];
+const MAP_ZOOM=2;
+const mapView=()=>zoom<MAP_ZOOM;
 let active = null, screen = 'menu', dirty = false, lastSaved = 0, lastChanged = 0;
 let farmDraft = null, farmErase = false, farmPreview = null, farmDraftEntries = [];
 let controllerPlacement = false, selectedFarm = null, farmGesture = 'rectangle', brushSize = 8, brushCursor = null;
@@ -60,9 +64,9 @@ function changed() {
 }
 function openWorld(save) {
   world = new World(save.settings, 96, decodeState(save), save.generator);
-  world.construction = save.version >= 2 ? structuredClone(save.construction) : null; bindFarms(world,world.construction);
+  world.construction = save.version >= 2 ? structuredClone(save.construction) : null; bindFarms(world,world.construction);world.economy=save.economy?structuredClone(save.economy):world.construction?newEconomy():null;bindEconomy(world);economySelection=null;economyListStamp='';$('economy-panel').hidden=true;
   controllerPlacement=false;selectedFarm=null;placement = null; cutting = false; selection = null; farmDraft = null; farmPreview = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
-  active = { id: save.id, name: save.name }; camera = { ...save.camera }; zoom = save.zoom;
+  detailReturn=null;active = { id: save.id, name: save.name }; camera = { ...save.camera }; zoom = save.zoom;
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
   dirty = false; $('world-title').textContent = active.name;
   $('save-status').classList.remove('error'); $('save-status').textContent = 'Saved in this browser';
@@ -104,8 +108,8 @@ form.addEventListener('input', labels);
 form.addEventListener('submit', event => {
   event.preventDefault();
   if (active && dirty && !saveCurrent()) { showScreen('menu'); return; }
-  world = new World(settings(), 96, undefined, CURRENT_GENERATOR); world.construction = newConstruction(); bindFarms(world,world.construction);
-  camera = { x: 0, y: 0 }; zoom = Math.min(16, innerWidth / 60); controllerPlacement=false;selectedFarm=null;placement = null; cutting = false; selection = null; farmDraft = null; farmPreview = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
+  world = new World(settings(), 96, undefined, CURRENT_GENERATOR); world.construction = newConstruction(); bindFarms(world,world.construction);world.economy=newEconomy();bindEconomy(world);economySelection=null;economyListStamp='';$('economy-panel').hidden=true;
+  detailReturn=null;camera = { x: 0, y: 0 }; zoom = Math.min(16, innerWidth / 60); controllerPlacement=false;selectedFarm=null;placement = null; cutting = false; selection = null; farmDraft = null; farmPreview = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
   active = { id: crypto.randomUUID(), name: $('world-name').value.trim() || world.settings.seed || 'Untitled world' };
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
   $('world-title').textContent = active.name; dirty = true; showScreen('viewport'); updateBuildUI(); saveCurrent();
@@ -124,15 +128,17 @@ function formatDistance(metres) {
 }
 function detailView() { return zoom >= Math.max(4, width / (CHUNK_SIZE * 6), height / (CHUNK_SIZE * 6)); }
 function setZoom(next) {
-  const before = zoom; zoom = Math.max(.01, Math.min(60, next));
+  const before = zoom;if(before>=MAP_ZOOM&&next<MAP_ZOOM&&camera)detailReturn={camera:{...camera},zoom:before}; zoom = Math.max(.01, Math.min(60, next));
   const target = 100 / zoom, power = 10 ** Math.floor(Math.log10(target));
   const scaleMetres = [1, 2, 5, 10].map(n => n * power).find(n => n >= target);
   $('scale-line').style.width = `${scaleMetres * zoom}px`;
   $('scale-distance').textContent = formatDistance(scaleMetres);
-  $('scale-label').textContent = detailView() ? (zoom >= 16 ? '1 SQUARE = 1 m' : 'GRID = 8 m · TILES = 1 m') : 'FOREST COVER · APPROXIMATE';
+  $('map-toggle').setAttribute('aria-pressed',String(mapView()));$('scale-label').textContent = mapView()?'REGIONAL MAP · APPROXIMATE':detailView() ? (zoom >= 16 ? '1 SQUARE = 1 m' : 'GRID = 8 m · TILES = 1 m') : 'FOREST COVER · APPROXIMATE';
   $('view-span').textContent = `${formatDistance(width / zoom)} across`;
   if (before !== zoom && active) changed();
 }
+function toggleMap(){if(screen!=='viewport')return;stopDrag();if(mapView()){const back=detailReturn;camera=back?{...back.camera}:{...camera};setZoom(back?.zoom||16);detailReturn=null;}else setZoom(Math.min(.8,width/1800));changed();}
+$('map-toggle').addEventListener('click',toggleMap);
 $('zoom-in').addEventListener('click', () => setZoom(zoom * 2));
 $('zoom-out').addEventListener('click', () => setZoom(zoom / 2));
 $('zoom-reset').addEventListener('click', () => setZoom(30));
@@ -176,6 +182,7 @@ for (const type of ['pointerup','pointercancel','lostpointercapture']) canvas.ad
 });
 const movementKeys = new Set(['w','a','s','d','arrowup','arrowleft','arrowdown','arrowright']);
 window.addEventListener('keydown', event => {
+  if(screen==='viewport'&&!event.target.matches('input, textarea, select')&&event.key.toLowerCase()==='m'&&!event.repeat){event.preventDefault();toggleMap();return;}
   if (screen === 'viewport' && event.key === 'Escape') { cancelTool(); return; }
   if (screen !== 'viewport' || event.target.matches('input, textarea, select') || !movementKeys.has(event.key.toLowerCase())) return;
   event.preventDefault(); keys.add(event.key.toLowerCase());
@@ -243,8 +250,9 @@ function selectSite(clientX, clientY) {
   const game = world.construction;
   if (!game) return;
   if(game.ship&&!placement){
+    if(mapView()){const bounds=canvas.getBoundingClientRect(),x=clientX-bounds.left,y=clientY-bounds.top,hit=[...mapHits].reverse().find(h=>x>=h.x&&x<=h.x+h.w&&y>=h.y&&y<=h.y+h.h);if(hit){if(hit.kind==='ship')$('view-ship').click();else if(hit.kind==='farm')showEconomy({kind:'farm',id:hit.id});else showEconomy({kind:'town',id:hit.id});return;}}
     const point=mapTile(clientX,clientY),farm=game.farms.find(f=>f.controller!==null&&coverageIntersectsSite(game.sites[f.controller],point))||game.farms.find(f=>f.controller===null&&coverageContains(f.coverage,point.x,point.y));
-    if(farm)openAllotment(farm.id);return;
+    if(farm){if(farm.controller===null)openAllotment(farm.id);else showEconomy({kind:'farm',id:farm.id});return;}const town=world.economy?.towns.find(t=>Math.abs(point.x-t.x-t.w/2)<Math.max(t.w/2,8/zoom)&&Math.abs(point.y-t.y-t.h/2)<Math.max(t.h/2,8/zoom));if(town){showEconomy({kind:'town',id:town.id});return;}const worker=world.economy?.workers.find(w=>Math.hypot(w.x-point.x,w.y-point.y)<Math.max(2,8/zoom));if(worker)showEconomy({kind:'worker',id:worker.id});return;
   }
   const bounds = canvas.getBoundingClientRect(), size = game.ship ? BUILDING : SHIP;
   const position = { x: Math.floor(camera.x + (clientX - bounds.left - width / 2) / zoom - size.w / 2), y: Math.floor(camera.y + (clientY - bounds.top - height / 2) / zoom - size.h / 2) };
@@ -261,7 +269,7 @@ function updateSelection(x,y) {
   updateBuildUI();
 }
 function coverageIntersectsSite(site,p){return p.x>=site.x&&p.y>=site.y&&p.x<site.x+site.w&&p.y<site.y+site.h;}
-function cancelTool() { farmDraft=null;farmPreview=null;farmDraftEntries=[];controllerPlacement=false;selectedFarm=null;brushCursor=null;orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
+function cancelTool() { economySelection=null;$('economy-panel').hidden=true;farmDraft=null;farmPreview=null;farmDraftEntries=[];controllerPlacement=false;selectedFarm=null;brushCursor=null;orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
 function openAllotment(id){
  cancelTool();const f=world.construction.farms.find(f=>f.id===id);selectedFarm=id;farmGesture='rectangle';$('farm-gesture').value='rectangle';
  if(f.controller===null){controllerPlacement=true;placement={x:Math.floor(camera.x-3),y:Math.floor(camera.y-3)};}
@@ -295,7 +303,7 @@ function updateBuildUI() {
   const landing = !game.ship, rect = landing ? {...game.pending,...SHIP} : placement ? {...placement,...BUILDING} : null;
   const valid = rect && (controllerPlacement?controllerCanPlace(game,rect,selectedFarm):canPlace(game,rect)) && zoom >= 4;
   $('build-title').textContent = landing ? 'Choose a landing site' : farmDraft ? `Farm ${selectedFarm} allotment` : controllerPlacement ? 'Place farm building' : cutting ? 'Cut trees' : placement ? 'Building blueprint' : 'Drone orders';
-  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : farmDraft ? `${farmGesture==='brush'?'Brush':'Drag boxes'} to allot or erase land. Prepared soil stays brown when erased. WASD / arrows pan.` : controllerPlacement ? '6 × 6 tiles. Choose a site, then allot land. Tap the building later to edit.' : cutting ? 'Tap a tree or drag a box, then confirm. Up to 128 trees / 4,096 tiles per order. WASD / arrows pan.' : placement ? '6 × 6 tiles. Tap a site, then place. Build and cut orders share one queue.' : 'Place a building blueprint or mark trees for the ship’s drone.';
+  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : farmDraft ? `${farmGesture==='brush'?'Brush':'Drag boxes'} to allot or erase land. Prepared soil stays brown. Applying restarts unharvested crop work. WASD / arrows pan.` : controllerPlacement ? '6 × 6 tiles. Choose a site, then allot land. Tap the building later to edit.' : cutting ? 'Tap a tree or drag a box, then confirm. Up to 128 trees / 4,096 tiles per order. WASD / arrows pan.' : placement ? '6 × 6 tiles. Tap a site, then place. Build and cut orders share one queue.' : 'Place a building blueprint or mark trees for the ship’s drone.';
   $('confirm-build').hidden = !rect && !cutting && !farmDraft;
   $('confirm-build').textContent = landing ? 'Land here' : farmDraft ? 'Apply allotment' : controllerPlacement ? 'Place farm building' : cutting ? `Order cutting${selection?.trees.length ? ' ('+selection.trees.length+')' : ''}` : 'Place blueprint';
   $('confirm-build').disabled = farmDraft ? !!farmDraft.error || !!farmPlacementError(game,farmDraft.coverage,selectedFarm) : cutting ? !detailView() || !selection?.trees.length || !!selection.error : !valid || (!landing && (game.jobs.length >= MAX_JOBS || game.sites.length >= MAX_SITES));
@@ -308,7 +316,7 @@ function updateBuildUI() {
   let status = '';
   if(farmDraft){const d=farmPreview||farmDraft;status=d.error||farmPlacementError(game,d.coverage,selectedFarm)||`${d.area.toLocaleString()} m² allotted · 256 tiles/s`;if(farmGesture==='brush')status+=` · ${brushSize} m brush`;else if(d.rect)status+=` · Selection ${d.rect.w} × ${d.rect.h} m`;}
   else if (cutting) status = !detailView() ? 'Zoom in to select individual trees.' : selection?.error || (selection ? `${selection.trees.length} ${selection.trees.length === 1 ? 'tree' : 'trees'} marked · ${game.jobs.length} jobs queued` : 'Select trees. Dragging marks an area in this tool.');
-  else if (rect) status = zoom < 4 ? 'Zoom in to choose exact tiles.' : valid ? `Site X ${rect.x} · Y ${rect.y}` : 'This footprint overlaps the ship or a building.';
+  else if (rect) status = zoom < 4 ? 'Zoom in to choose exact tiles.' : valid ? `Site X ${rect.x} · Y ${rect.y}` : 'This footprint overlaps occupied ground.';
   else {
     const d = game.drone, job = game.jobs[0], queue = game.jobs.length;
     const progress = job?.kind === 'build' ? game.sites[job.site].progress : job?.kind==='farm' ? world.farmCoverage.fields.get(job.farm).farm.progress : job?.progress;
@@ -329,7 +337,7 @@ $('farm-brush').addEventListener('change',()=>{stopDrag();brushSize=Number($('fa
 $('cancel-build').addEventListener('click', cancelTool);
 $('confirm-build').addEventListener('click', () => {
   const game = world.construction;
-  if(farmDraft){const result=applyAllotment(world,game,selectedFarm,farmDraft.coverage);if(result.error){farmDraft.error=result.error;updateBuildUI();return;}cancelTool();changed();saveCurrent();return;}
+  if(farmDraft){const result=applyAllotment(world,game,selectedFarm,farmDraft.coverage);if(result.error){farmDraft.error=result.error;updateBuildUI();return;}const id=selectedFarm;restartCrop(world,id);cancelTool();showEconomy({kind:'farm',id});changed();saveCurrent();return;}
   if (zoom < 4) return;
   if (cutting) {
     if (!detailView()) return;
@@ -340,9 +348,10 @@ $('confirm-build').addEventListener('click', () => {
   if (!hasEditRoom(world,game,{...(game.ship ? placement : game.pending),...(game.ship ? BUILDING : SHIP)})) { orderError = 'This world has reached its tree-clearing limit.'; updateBuildUI(); return; }
   if(controllerPlacement){const result=placeController(world,game,placement,selectedFarm);if(result.error){orderError=result.error;updateBuildUI();return;}openAllotment(result.farm.id);changed();saveCurrent();return;}
   const success = game.ship ? placeBuilding(world,game,placement) : land(world,game);
-  if (success) { cancelTool(); changed(); saveCurrent(); }
+  if (success) { ensureTowns(world);cancelTool(); changed(); saveCurrent(); }
 });
 $('view-ship').addEventListener('click', () => {
+  economySelection=null;$('economy-panel').hidden=true;
   const ship = world.construction.ship; camera = { x: ship.x + ship.w / 2, y: ship.y + ship.h / 2 };
   setZoom(Math.min(16, width / 60)); changed();
 });
@@ -443,12 +452,13 @@ function drawConstruction(left, top) {
   }
 }
 function updateStats() {
+  updateEconomyUI();
   const biome = world.isGrassland(camera.x, camera.y) ? 'Grasslands' : 'Woodland';
   $('world-stats').textContent = `${biome}\nSeed: ${world.settings.seed}\nPatch size: ${world.settings.scale} m\nNoise layers: ${world.settings.detail}\nTree amount: ${world.settings.density} / 100`;
   $('world-stats').style.whiteSpace = 'pre-wrap';
 }
 function overviewChunk(cx, cy, step) {
-  const key = `${step}:${cx},${cy}`;
+  const key = `${mapView()?'map':'terrain'}:${step}:${cx},${cy}`;
   if (overviews.has(key)) { const raster = overviews.get(key); overviews.delete(key); overviews.set(key, raster); return raster; }
   const start = performance.now(), raster = document.createElement('canvas'); raster.width = raster.height = 32;
   const c = raster.getContext('2d'), pixels = c.createImageData(32, 32);
@@ -461,6 +471,7 @@ function overviewChunk(cx, cy, step) {
       field += f / 4; meadowCover += meadow ? .25 : 0; cover += meadow ? 0 : t * t * (3 - 2 * t) * world.settings.density / 100 * .92 / 4;
     }
     const i = (y * 32 + x) * 4;
+    if(mapView()){const color=meadowCover>=.5?[173,177,123]:cover>=.22?[75,111,81]:[137,153,102];pixels.data.set([...color,255],i);continue;}
     pixels.data[i] = 148 - field * 22 - cover * 65 + meadowCover * 20;
     pixels.data[i+1] = 161 - field * 18 - cover * 58 + meadowCover * 15;
     pixels.data[i+2] = 103 - field * 17 - cover * 28 + meadowCover * 10; pixels.data[i+3] = 255;
@@ -472,7 +483,7 @@ function overviewChunk(cx, cy, step) {
 function draw(now) {
   requestAnimationFrame(draw);
   if (active) {
-    if (simulationAt && advanceConstruction(world.construction, Math.max(0, (now - simulationAt) / 1000), world)) changed();
+    if (simulationAt){const seconds=Math.max(0,(now-simulationAt)/1000);if(advanceConstruction(world.construction,seconds,world)||false)changed();if(advanceEconomy(world,seconds))changed();}
     simulationAt = now;
     if (dirty && now-lastSaved > 1000 && (now-lastChanged > 500 || now-lastSaved > 5000)) saveCurrent();
   }
@@ -508,7 +519,7 @@ function draw(now) {
   ctx.stroke();
   }
   drawFarms(left,top);
-  drawConstruction(left, top);
+  if(mapView())drawMapSymbols(left,top);else{mapHits=[];drawConstruction(left, top);drawEconomy(left,top);}
   frameCount++; frameMs += performance.now()-start;
   if(now-statsAt>250){$('position').textContent=`X ${Math.floor(camera.x)} · Y ${Math.floor(camera.y)}`;updateStats();updateBuildUI();statsAt=now;}
   if (dirty && now-lastSaved > 1000 && (now-lastChanged > 500 || now-lastSaved > 5000)) saveCurrent();
@@ -517,6 +528,7 @@ function draw(now) {
 // Read-only diagnostics for reproducible, bounded verification.
 window.woodland = Object.freeze({
   get construction(){return world?.construction ? structuredClone(world.construction) : null;},
+  get economy(){return world?.economy?structuredClone(world.economy):null;},
   get farmDraft(){return farmDraft ? structuredClone(farmPreview?.coverage?farmPreview:farmDraft) : null;},
   get selection(){return selection ? structuredClone(selection) : null;},
   get cutting(){return cutting;},
@@ -526,8 +538,53 @@ window.woodland = Object.freeze({
   get screen(){return screen;},
   get name(){return active?.name;},
   get camera(){return {...camera};},
-  get metrics(){return {frames:frameCount,meanWorkMs:frameMs/Math.max(1,frameCount),dataChunks:world?.chunks.size || 0,rasterChunks:rasters.size,visibleChunks,zoom,overviewCells,overviewChunks,overviewCache:overviews.size,overviewBuildMs,spanMetres:width/zoom,mode:detailView()?'detail':'overview'};},
+  get metrics(){return {frames:frameCount,meanWorkMs:frameMs/Math.max(1,frameCount),dataChunks:world?.chunks.size || 0,rasterChunks:rasters.size,visibleChunks,zoom,overviewCells,overviewChunks,overviewCache:overviews.size,overviewBuildMs,spanMetres:width/zoom,mode:mapView()?'map':detailView()?'detail':'overview'};},
   tile:(x,y)=>world.tile(x,y),
 });
 for (const key of ['scale', 'detail', 'density']) $(key).value = DEFAULTS[key];
 labels();showScreen('menu');requestAnimationFrame(draw);
+
+function refillSelect(node,items){if(!items.length)items=[['',node.id==='worker-farm'?'No farms yet':node.id==='worker-choice'?'No workers yet':'No towns nearby']];const old=node.value;node.replaceChildren(...items.map(([value,label])=>{const option=document.createElement('option');option.value=String(value);option.textContent=label;return option;}));if([...node.options].some(o=>o.value===old))node.value=old;}
+function showEconomy(selection){cancelTool();economySelection=selection;economyListStamp='';$('economy-panel').hidden=false;updateEconomyUI();if(selection.kind==='town')$('town-choice').value=String(selection.id);if(selection.kind==='worker'){$('worker-choice').value=String(selection.id);syncWorkerChoice();}if(selection.kind==='farm'){$('worker-farm').value=String(selection.id);$('crop-choice').value=farmEconomy(world,selection.id).crop||'';}updateEconomyUI();}
+function syncWorkerChoice(){const w=world.economy.workers.find(w=>w.id===Number($('worker-choice').value));if(w?.assignment){$('worker-job').value=w.assignment.kind;$('worker-farm').value=String(w.assignment.farm);if(w.assignment.town)$('town-choice').value=String(w.assignment.town);}else $('worker-job').value='idle';}
+function updateEconomyUI(){
+ const e=world?.economy;$('gold-balance').hidden=!e;if(!e)return;$('gold-balance').textContent=`${e.gold} gold`;
+ if(!economySelection)return;
+ const farm=economySelection.kind==='farm'?farmEconomy(world,economySelection.id):null;
+ $('economy-title').textContent=farm?`Farm ${farm.farm}`:economySelection.kind==='town'?'Town market':'Towns & workers';$('farm-operations').hidden=!farm;
+ const stamp=e.towns.map(t=>t.id).join(',')+'|'+e.workers.map(w=>w.id).join(',')+'|'+world.construction.farms.map(f=>f.id+':'+f.controller).join(',');
+ if(stamp!==economyListStamp){refillSelect($('town-choice'),e.towns.map(t=>[t.id,t.name]));refillSelect($('worker-choice'),e.workers.map(w=>[w.id,`Worker ${w.id}`]));refillSelect($('worker-farm'),world.construction.farms.filter(f=>f.controller!==null).map(f=>[f.id,`Farm ${f.id}`]));economyListStamp=stamp;}
+ if(farm){const c=farm.cycle,workers=e.workers.filter(w=>w.assignment?.kind==='farm'&&w.assignment.farm===farm.farm);$('farm-economy-status').textContent=`Stored: ${farm.stock.wheat} kg wheat · ${farm.stock.corn} kg corn · ${workers.length} assigned. `+(c?`${CROPS[c.crop].name}: ${c.phase} ${Math.floor((c.phase==='growing'?c.grown/CROPS[c.crop].growSeconds:c.work/c.area)*100)}%`:(farm.crop?'Waiting for a worker and prepared land.':'Choose a crop, then assign a worker.'));}
+ const town=e.towns.find(t=>t.id===Number($('town-choice').value));$('town-prices').textContent=town?`${town.name} buys wheat ${CROPS.wheat.price} gold/kg · corn ${CROPS.corn.price} gold/kg`:'';$('hire-worker').textContent=`Hire · ${HIRING.wage} gold/month`;$('hire-worker').disabled=!town||e.gold<HIRING.wage||e.workers.length>=BALANCE.maxWorkers;
+ const w=e.workers.find(w=>w.id===Number($('worker-choice').value));$('payroll-policy').textContent=`Month ${Math.floor(e.clock/HIRING.period)+1} · 1 game month = ${HIRING.period} seconds. Workers allow ${HIRING.graceMonths} unpaid months, then leave; missed wages are forgiven.`;$('departure-notice').textContent=e.lastDeparture;$('departure-notice').hidden=!e.lastDeparture;$('worker-state').textContent=w?`Worker ${w.id}: ${w.leaving?'Leaving after three unpaid months · '+w.note:w.note}${w.unpaid&&!w.leaving?' · unpaid grace: '+Math.max(0,Math.ceil((w.paidUntil+(HIRING.graceMonths-w.missedMonths)*HIRING.period-e.clock)))+' seconds until departure':''}${w.cargo?' · carrying '+w.cargo.kg+' kg '+w.cargo.crop:''}${!$('worker-farm').value?' · Build a farm first, then assign this worker':''}.`:`No workers yet. Hire at a town; the first month's wages are paid now.`;$('assign-worker').disabled=!w||w.leaving||($('worker-job').value!=='idle'&&!$('worker-farm').value);
+}
+$('open-trade').addEventListener('click',()=>showEconomy({kind:'overview'}));$('close-economy').addEventListener('click',()=>{economySelection=null;$('economy-panel').hidden=true;});
+$('worker-choice').addEventListener('change',()=>{syncWorkerChoice();updateEconomyUI();});$('town-choice').addEventListener('change',updateEconomyUI);$('worker-job').addEventListener('change',updateEconomyUI);
+$('hire-worker').addEventListener('click',()=>{const r=hireWorker(world,Number($('town-choice').value));$('economy-message').textContent=r.error||'Worker hired. Choose their repeating job.';if(r.worker){economyListStamp='';updateEconomyUI();$('worker-choice').value=String(r.worker.id);$('worker-job').value=economySelection?.kind==='farm'?'farm':'idle';changed();saveCurrent();}updateEconomyUI();});
+$('assign-worker').addEventListener('click',()=>{const kind=$('worker-job').value,a=kind==='idle'?null:{kind,farm:Number($('worker-farm').value),...(kind==='delivery'?{town:Number($('town-choice').value)}:{})};const r=assignWorker(world,Number($('worker-choice').value),a);$('economy-message').textContent=r.error||(a?'Job assigned. The worker will repeat it automatically.':'Unassigned. Any carried harvest returns to its farm first.');changed();saveCurrent();updateEconomyUI();});
+$('apply-crop').addEventListener('click',()=>{if(economySelection?.kind!=='farm')return;setCrop(world,economySelection.id,$('crop-choice').value||null);$('economy-message').textContent='Crop choice saved. Unharvested work restarts; stored harvest stays.';changed();saveCurrent();updateEconomyUI();});
+$('edit-farm-land').addEventListener('click',()=>{const id=economySelection.id;openAllotment(id);});
+$('view-town').addEventListener('click',()=>{const t=world.economy.towns.find(t=>t.id===Number($('town-choice').value));if(t){economySelection=null;$('economy-panel').hidden=true;camera={x:t.x+t.w/2,y:t.y+t.h/2};setZoom(Math.min(10,width/70));changed();}});
+function drawEconomy(left,top){const e=world.economy;if(!e)return;
+ for(const t of e.towns){const x=(t.x-left)*zoom,y=(t.y-top)*zoom,w=t.w*zoom,h=t.h*zoom;if(x+w<0||y+h<0||x>width||y>height)continue;
+  if(zoom>=2){ctx.fillStyle='#b6a37c77';ctx.fillRect(x+7.5*zoom,y,3*zoom,h);ctx.fillRect(x,y+6*zoom,w,2*zoom);
+   for(let i=0;i<6;i++){const col=i%3,row=Math.floor(i/3),v=((world.seed>>>0)+t.id*13+i*7)%3,hx=x+(1+col*5.5)*zoom,hy=y+(1+row*7)*zoom,rw=4*zoom,rh=(3.5+v*.25)*zoom;ctx.fillStyle='#d0baa0';ctx.fillRect(hx,hy,rw,rh+zoom*.6);ctx.fillStyle=['#765445','#87705a','#67645a'][v];ctx.fillRect(hx-zoom*.25,hy-zoom*.2,rw+zoom*.5,rh);ctx.strokeStyle='#baa285';ctx.lineWidth=Math.max(1,zoom*.12);ctx.beginPath();ctx.moveTo(hx+rw/2,hy);ctx.lineTo(hx+rw/2,hy+rh);ctx.stroke();ctx.fillStyle='#463d32';ctx.fillRect(hx+rw*.4,hy+rh,zoom*.8,zoom*.6);}
+  }else{ctx.fillStyle='#c9b18b';ctx.fillRect(x,y,Math.max(12,w),Math.max(10,h));ctx.strokeStyle='#f2dfb9';ctx.lineWidth=1.5;ctx.strokeRect(x,y,Math.max(12,w),Math.max(10,h));}
+  ctx.fillStyle='#fff1cf';ctx.font='12px Arial';ctx.fillText(t.name,x,y-6);
+ }
+ const selected=Number($('worker-choice').value);for(const w of e.workers){const x=(w.x-left)*zoom,y=(w.y-top)*zoom;if(economySelection&&selected===w.id&&w.path.length){ctx.strokeStyle='#f0cf7866';ctx.lineWidth=1.5;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(x,y);for(const p of w.path.slice(w.step))ctx.lineTo((p.x-left)*zoom,(p.y-top)*zoom);ctx.stroke();ctx.setLineDash([]);}if(x<-30||y<-30||x>width+30||y>height+30)continue;const size=Math.max(4,Math.min(8,zoom*.5));ctx.fillStyle=w.unpaid?'#df8970':'#f5e2a3';ctx.strokeStyle='#40392a';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x,y,size,0,Math.PI*2);ctx.fill();ctx.stroke();if(w.assignment?.kind==='delivery'||w.cargo){ctx.fillStyle=w.cargo?'#d8a454':'#837655';ctx.fillRect(x+size+2,y-size,Math.max(8,size*2),size*2);ctx.strokeRect(x+size+2,y-size,Math.max(8,size*2),size*2);if(w.cargo){ctx.fillStyle='#fff3ca';ctx.font='10px Arial';ctx.fillText(`${w.cargo.kg} kg`,x-5,y-size-5);}}ctx.fillStyle='#fff5da';ctx.font='10px Arial';if(economySelection&&selected===w.id)ctx.fillText(`W${w.id}`,x-size,y+size+12);}
+ for(const f of e.farms){const site=world.construction.sites[world.construction.farms.find(g=>g.id===f.farm)?.controller];if(!site||site.progress<1||!f.crop)continue;const x=(site.x-left)*zoom,y=(site.y-top)*zoom;if(x<0||y<0||x>width||y>height)continue;ctx.fillStyle='#f1d780';ctx.font='11px Arial';ctx.fillText(CROPS[f.crop].name,x,y+site.h*zoom+14);}
+}
+
+function drawMapSymbols(left,top){
+ mapHits=[];const game=world.construction;if(!game)return;
+ const symbols=[...(game.ship?[{kind:'ship',id:0,rect:game.ship,label:'Ship',color:'#d3d8d4'}]:[]),...game.farms.filter(f=>f.controller!==null).map(f=>({kind:'farm',id:f.id,rect:game.sites[f.controller],label:`Farm ${f.id}`,color:'#c49b66'})),...(world.economy?.towns||[]).map(t=>({kind:'town',id:t.id,rect:t,label:t.name,color:'#f2d992'}))];
+ const markers=symbols.map(s=>({x:(s.rect.x+s.rect.w/2-left)*zoom-9,y:(s.rect.y+s.rect.h/2-top)*zoom-9,w:18,h:18})),labels=[];ctx.font='12px Arial';
+ for(const symbol of symbols){const r=symbol.rect,x=(r.x+r.w/2-left)*zoom,y=(r.y+r.h/2-top)*zoom;if(x<-30||y<-30||x>width+30||y>height+30)continue;
+  ctx.fillStyle=symbol.color;ctx.strokeStyle='#293d32';ctx.lineWidth=2;ctx.beginPath();if(symbol.kind==='town')ctx.arc(x,y,7,0,Math.PI*2);else if(symbol.kind==='ship'){ctx.moveTo(x,y-8);ctx.lineTo(x+8,y);ctx.lineTo(x,y+8);ctx.lineTo(x-8,y);ctx.closePath();}else ctx.rect(x-6,y-6,12,12);ctx.fill();ctx.stroke();
+  const tw=ctx.measureText(symbol.label).width+10;let lx=Math.min(width-tw-4,Math.max(4,x+12)),ly=Math.max(4,y-9);for(let n=0;n<labels.length+markers.length+1&&[...labels,...markers].some(b=>lx<b.x+b.w&&lx+tw>b.x&&ly<b.y+b.h&&ly+19>b.y);n++)ly+=20;const box={x:lx,y:ly,w:tw,h:19};labels.push({...box,text:symbol.label});ctx.strokeStyle='#ece7c288';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+7,y);ctx.lineTo(lx,ly+9);ctx.stroke();mapHits.push({kind:symbol.kind,id:symbol.id,x:x-9,y:y-9,w:18,h:18},{kind:symbol.kind,id:symbol.id,...box});
+ }
+ for(const b of labels){ctx.fillStyle='#293d32e8';ctx.fillRect(b.x,b.y,b.w,b.h);ctx.fillStyle='#f5ebcf';ctx.fillText(b.text,b.x+5,b.y+14);}
+ const d=game.drone;if(d){const x=(d.x-left)*zoom,y=(d.y-top)*zoom;ctx.fillStyle='#efcf72';ctx.fillRect(x-2,y-2,4,4);}
+ for(const w of world.economy?.workers||[]){ctx.fillStyle=w.cargo?'#ffdf83':'#faf0c8';ctx.beginPath();ctx.arc((w.x-left)*zoom,(w.y-top)*zoom,w.cargo?3:2,0,Math.PI*2);ctx.fill();}
+}
