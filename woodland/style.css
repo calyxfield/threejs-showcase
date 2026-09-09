@@ -23,3 +23,4 @@ canvas.selecting{cursor:crosshair}
 #economy-panel p{color:#dfe8cf}#economy-panel #economy-message{color:#f0d498}
 
 @media(min-width:701px) and (max-width:1000px){.toolbar #world-title{display:none}}
+@media(min-width:701px) and (max-width:1000px){.toolbar .map-heading{flex:0 0 auto;min-width:170px}.toolbar #ship-tools{flex:1;min-width:0}}
