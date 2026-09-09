@@ -24,3 +24,28 @@ canvas.selecting{cursor:crosshair}
 
 @media(min-width:701px) and (max-width:1000px){.toolbar #world-title{display:none}}
 @media(min-width:701px) and (max-width:1000px){.toolbar .map-heading{flex:0 0 auto;min-width:170px}.toolbar #ship-tools{flex:1;min-width:0}}
+
+/* Hired people have a dedicated, bounded drawer attached to the top toolbar. */
+#villager-panel{position:absolute;top:100%;left:18px;width:min(620px,calc(100% - 36px));height:min(310px,45dvh);display:flex;flex-direction:column;background:#20382dfc;border:1px solid #94a68877;box-shadow:0 8px 22px #12251d55;color:#edf0d9}
+.villager-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid #94a68844;font-size:13px;flex:none}
+#villager-panel button{font:12px Arial;background:#d5dfbc;color:#233b29;border:1px solid #9faf8a;border-radius:3px;padding:8px 10px;cursor:pointer}
+#villager-panel button.quiet{background:none;color:#e2ead1;border-color:#9faf8a66}
+#villager-panel button:disabled{opacity:.5;cursor:default}
+#villager-panel p{font:12px/1.4 Arial;margin:0;color:#d6dfc6}
+#villager-empty{padding:14px}
+#villager-body{display:grid;grid-template-columns:175px minmax(0,1fr);min-height:0;flex:1}
+#villager-list{overflow-y:auto;border-right:1px solid #94a68844;padding:5px;overscroll-behavior:contain}
+#villager-list button{display:block;width:100%;text-align:left;background:none;color:#dae4cc;border:1px solid transparent;margin:0 0 3px;min-height:48px;padding:8px}
+#villager-list button[aria-pressed=true]{background:#c6d5aa;color:#20372a;border-color:#dce7c5}
+#villager-list strong,#villager-list span{display:block;overflow-wrap:anywhere}
+#villager-list span{font-size:10px;line-height:1.3;margin-top:3px}
+.villager-inspector{display:flex;flex-direction:column;min-width:0;min-height:0}
+.villager-details{overflow-y:auto;padding:11px 13px;flex:1;overscroll-behavior:contain}
+#villager-name{font:bold 15px Arial;margin:0 0 4px}
+#villager-panel #villager-origin{font-size:10px;color:#bac9ad;margin-bottom:11px}
+#villager-panel #villager-gone{color:#edceab}
+#villager-facts{display:grid;grid-template-columns:60px minmax(0,1fr);gap:8px 10px;font:12px/1.4 Arial;margin:0}
+#villager-facts dt{color:#b7c8a8}#villager-facts dd{margin:0;overflow-wrap:anywhere}
+.villager-actions{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid #94a68844;flex:none}
+#open-villagers[aria-expanded=true]{background:#d5dfbc;color:#233b29;border-color:#dce7c5}
+@media(max-width:700px){#villager-panel{left:8px;width:calc(100% - 16px);height:min(320px,43dvh)}#villager-body{grid-template-columns:112px minmax(0,1fr)}.villager-details{padding:10px}.villager-heading{padding:8px 10px}#villager-facts{grid-template-columns:56px minmax(0,1fr);gap:8px 6px;font-size:12px}.villager-actions{padding:7px;gap:5px}#villager-panel .villager-actions button{padding:9px 7px;font-size:11px}#villager-list button{min-height:50px;padding:7px 5px}#villager-list span{font-size:10px}}

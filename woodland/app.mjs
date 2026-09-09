@@ -11,6 +11,7 @@ const RASTER_TILE = 16, RASTER_LIMIT = 64;
 const OVERVIEW_SIZE=128,OVERVIEW_LIMIT=160,OVERVIEW_TARGET=3,OVERVIEW_SAMPLES=640;
 const rasters = new Map(), overviews = new Map(), keys = new Set();
 let economySelection=null,economyListStamp='',detailReturn=null,mapHits=[];
+let selectedVillagerId=null,villagerListStamp='';
 const MAP_ZOOM=2;
 const mapView=()=>zoom<MAP_ZOOM;
 let active = null, screen = 'menu', dirty = false, lastSaved = 0, lastChanged = 0;
@@ -65,7 +66,7 @@ function changed() {
 }
 function openWorld(save) {
   world = new World(save.settings, 96, decodeState(save), save.generator);
-  world.construction = save.version >= 2 ? structuredClone(save.construction) : null; bindFarms(world,world.construction);world.economy=save.economy?structuredClone(save.economy):world.construction?newEconomy():null;bindEconomy(world);economySelection=null;economyListStamp='';$('economy-panel').hidden=true;
+  world.construction = save.version >= 2 ? structuredClone(save.construction) : null; bindFarms(world,world.construction);world.economy=save.economy?structuredClone(save.economy):world.construction?newEconomy():null;bindEconomy(world);economySelection=null;economyListStamp='';$('economy-panel').hidden=true;resetVillagers();
   controllerPlacement=false;selectedFarm=null;placement = null; cutting = false; selection = null; farmDraft = null; farmPreview = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
   detailReturn=null;active = { id: save.id, name: save.name }; camera = { ...save.camera }; zoom = save.zoom;
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
@@ -109,7 +110,7 @@ form.addEventListener('input', labels);
 form.addEventListener('submit', event => {
   event.preventDefault();
   if (active && dirty && !saveCurrent()) { showScreen('menu'); return; }
-  world = new World(settings(), 96, undefined, CURRENT_GENERATOR); world.construction = newConstruction(); bindFarms(world,world.construction);world.economy=newEconomy();bindEconomy(world);economySelection=null;economyListStamp='';$('economy-panel').hidden=true;
+  world = new World(settings(), 96, undefined, CURRENT_GENERATOR); world.construction = newConstruction(); bindFarms(world,world.construction);world.economy=newEconomy();bindEconomy(world);economySelection=null;economyListStamp='';$('economy-panel').hidden=true;resetVillagers();
   detailReturn=null;camera = { x: 0, y: 0 }; zoom = Math.min(16, innerWidth / 60); controllerPlacement=false;selectedFarm=null;placement = null; cutting = false; selection = null; farmDraft = null; farmPreview = null; orderError = ''; canvas.classList.remove('selecting'); simulationAt = performance.now();
   active = { id: crypto.randomUUID(), name: $('world-name').value.trim() || world.settings.seed || 'Untitled world' };
   renderedStateRevision = world.state.revision; releaseRasters(); overviews.clear();
@@ -176,7 +177,7 @@ function stopDrag() {
 }
 for (const type of ['pointerup','pointercancel','lostpointercapture']) canvas.addEventListener(type, event => {
   if (drag && event.pointerId === drag.id) {
-    if (type === 'pointerup') { if(farmDraft){updateFarmPatch(event.clientX,event.clientY);if(!farmPreview.error)farmDraft={...farmDraft,...farmPreview,error:undefined};else farmDraft.error=farmPreview.error;farmPreview=null;updateBuildUI();} else if (cutting) updateSelection(event.clientX,event.clientY); else if (!drag.moved) selectSite(event.clientX,event.clientY); }
+    if (type === 'pointerup') { if(farmDraft){updateFarmPatch(event.clientX,event.clientY);if(!farmPreview.error)farmDraft={...farmDraft,...farmPreview,error:undefined};else farmDraft.error=farmPreview.error;farmPreview=null;updateBuildUI();} else if (cutting) updateSelection(event.clientX,event.clientY); else if (!drag.moved) selectSite(event.clientX,event.clientY,event.pointerType); }
     else if (type === 'pointercancel') { if(cutting)selection=null; }
     stopDrag();
   }
@@ -246,14 +247,16 @@ function pan(dt) {
   const distance = 480 / zoom * dt / Math.hypot(dx,dy);
   camera.x += dx * distance; camera.y += dy * distance; changed();
 }
-function selectSite(clientX, clientY) {
+function selectSite(clientX, clientY, pointerType='mouse') {
   orderError = '';
   const game = world.construction;
   if (!game) return;
   if(game.ship&&!placement){
+    if(mapView()){const bounds=canvas.getBoundingClientRect(),x=clientX-bounds.left,y=clientY-bounds.top,label=[...mapHits].reverse().find(h=>h.isLabel&&x>=h.x&&x<=h.x+h.w&&y>=h.y&&y<=h.y+h.h);if(label){if(label.kind==='ship')$('view-ship').click();else showEconomy({kind:label.kind,id:label.id});return;}}
+    const worker=hitVillager(clientX,clientY,pointerType);if(worker){showVillagers(worker.id);return;}
     if(mapView()){const bounds=canvas.getBoundingClientRect(),x=clientX-bounds.left,y=clientY-bounds.top,hit=[...mapHits].reverse().find(h=>x>=h.x&&x<=h.x+h.w&&y>=h.y&&y<=h.y+h.h);if(hit){if(hit.kind==='ship')$('view-ship').click();else if(hit.kind==='farm')showEconomy({kind:'farm',id:hit.id});else showEconomy({kind:'town',id:hit.id});return;}}
     const point=mapTile(clientX,clientY),farm=game.farms.find(f=>f.controller!==null&&coverageIntersectsSite(game.sites[f.controller],point))||game.farms.find(f=>f.controller===null&&coverageContains(f.coverage,point.x,point.y));
-    if(farm){if(farm.controller===null)openAllotment(farm.id);else showEconomy({kind:'farm',id:farm.id});return;}const town=world.economy?.towns.find(t=>Math.abs(point.x-t.x-t.w/2)<Math.max(t.w/2,8/zoom)&&Math.abs(point.y-t.y-t.h/2)<Math.max(t.h/2,8/zoom));if(town){showEconomy({kind:'town',id:town.id});return;}const worker=world.economy?.workers.find(w=>Math.hypot(w.x-point.x,w.y-point.y)<Math.max(2,8/zoom));if(worker)showEconomy({kind:'worker',id:worker.id});return;
+    if(farm){if(farm.controller===null)openAllotment(farm.id);else showEconomy({kind:'farm',id:farm.id});return;}const town=world.economy?.towns.find(t=>Math.abs(point.x-t.x-t.w/2)<Math.max(t.w/2,8/zoom)&&Math.abs(point.y-t.y-t.h/2)<Math.max(t.h/2,8/zoom));if(town){showEconomy({kind:'town',id:town.id});return;}return;
   }
   const bounds = canvas.getBoundingClientRect(), size = game.ship ? BUILDING : SHIP;
   const position = { x: Math.floor(camera.x + (clientX - bounds.left - width / 2) / zoom - size.w / 2), y: Math.floor(camera.y + (clientY - bounds.top - height / 2) / zoom - size.h / 2) };
@@ -270,7 +273,7 @@ function updateSelection(x,y) {
   updateBuildUI();
 }
 function coverageIntersectsSite(site,p){return p.x>=site.x&&p.y>=site.y&&p.x<site.x+site.w&&p.y<site.y+site.h;}
-function cancelTool() { economySelection=null;$('economy-panel').hidden=true;farmDraft=null;farmPreview=null;farmDraftEntries=[];controllerPlacement=false;selectedFarm=null;brushCursor=null;orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
+function cancelTool() { closeVillagers();economySelection=null;$('economy-panel').hidden=true;farmDraft=null;farmPreview=null;farmDraftEntries=[];controllerPlacement=false;selectedFarm=null;brushCursor=null;orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
 function openAllotment(id){
  cancelTool();const f=world.construction.farms.find(f=>f.id===id);selectedFarm=id;farmGesture='rectangle';$('farm-gesture').value='rectangle';
  if(f.controller===null){controllerPlacement=true;placement={x:Math.floor(camera.x-3),y:Math.floor(camera.y-3)};}
@@ -352,7 +355,7 @@ $('confirm-build').addEventListener('click', () => {
   if (success) { ensureTowns(world);cancelTool(); changed(); saveCurrent(); }
 });
 $('view-ship').addEventListener('click', () => {
-  economySelection=null;$('economy-panel').hidden=true;
+  closeVillagers();economySelection=null;$('economy-panel').hidden=true;
   const ship = world.construction.ship; camera = { x: ship.x + ship.w / 2, y: ship.y + ship.h / 2 };
   setZoom(Math.min(16, width / 60)); changed();
 });
@@ -543,9 +546,10 @@ for (const key of ['scale', 'detail', 'density']) $(key).value = DEFAULTS[key];
 labels();showScreen('menu');requestAnimationFrame(draw);
 
 function refillSelect(node,items){if(!items.length)items=[['',node.id==='worker-farm'?'No farms yet':node.id==='worker-choice'?'No workers yet':'No towns nearby']];const old=node.value;node.replaceChildren(...items.map(([value,label])=>{const option=document.createElement('option');option.value=String(value);option.textContent=label;return option;}));if([...node.options].some(o=>o.value===old))node.value=old;}
-function showEconomy(selection){cancelTool();$('economy-message').textContent='';economySelection=selection;economyListStamp='';$('economy-panel').hidden=false;updateEconomyUI();if(selection.kind==='town')$('town-choice').value=String(selection.id);if(selection.kind==='worker'){$('worker-choice').value=String(selection.id);syncWorkerChoice();}if(selection.kind==='farm'){$('worker-farm').value=String(selection.id);$('crop-choice').value=farmEconomy(world,selection.id).crop||'';}updateEconomyUI();}
+function showEconomy(selection){cancelTool();$('economy-message').textContent='';economySelection=selection;economyListStamp='';$('economy-panel').hidden=false;updateEconomyUI();if(selection.kind==='town')$('town-choice').value=String(selection.id);if(selection.kind==='worker'){selectedVillagerId=selection.id;$('worker-choice').value=String(selection.id);syncWorkerChoice();}if(selection.kind==='farm'){$('worker-farm').value=String(selection.id);$('crop-choice').value=farmEconomy(world,selection.id).crop||'';}updateEconomyUI();}
 function syncWorkerChoice(){const w=world.economy.workers.find(w=>w.id===Number($('worker-choice').value));if(w?.assignment){$('worker-job').value=w.assignment.kind;$('worker-farm').value=String(w.assignment.farm);if(w.assignment.town)$('town-choice').value=String(w.assignment.town);}else $('worker-job').value='idle';}
 function updateEconomyUI(){
+ updateVillagersUI();
  const e=world?.economy;$('gold-balance').hidden=!e;if(!e)return;$('gold-balance').textContent=`${e.gold} gold`;
  if(!economySelection)return;
  const farm=economySelection.kind==='farm'?farmEconomy(world,economySelection.id):null;
@@ -557,8 +561,8 @@ function updateEconomyUI(){
  const w=e.workers.find(w=>w.id===Number($('worker-choice').value));$('payroll-policy').textContent=`Month ${Math.floor(e.clock/HIRING.period)+1} · 1 game month = ${HIRING.period} seconds. Workers allow ${HIRING.graceMonths} unpaid months, then leave; missed wages are forgiven.`;$('departure-notice').textContent=e.lastDeparture;$('departure-notice').hidden=!e.lastDeparture;$('worker-state').textContent=w?`Worker ${w.id}: ${w.leaving?'Leaving after three unpaid months · '+w.note:w.note}${w.unpaid&&!w.leaving?' · unpaid grace: '+Math.max(0,Math.ceil((w.paidUntil+(HIRING.graceMonths-w.missedMonths)*HIRING.period-e.clock)))+' seconds until departure':''}${w.cargo?' · carrying '+w.cargo.kg+' kg '+w.cargo.crop:''}${!$('worker-farm').value?' · Build a farm first, then assign this worker':''}.`:`No workers yet. Hire at a town; the first month's wages are paid now.`;$('assign-worker').disabled=!w||w.leaving||($('worker-job').value!=='idle'&&!$('worker-farm').value);
 }
 $('open-trade').addEventListener('click',()=>showEconomy({kind:'overview'}));$('close-economy').addEventListener('click',()=>{economySelection=null;$('economy-panel').hidden=true;});
-$('worker-choice').addEventListener('change',()=>{$('economy-message').textContent='';syncWorkerChoice();updateEconomyUI();});$('town-choice').addEventListener('change',()=>{$('economy-message').textContent='';updateEconomyUI();});$('worker-job').addEventListener('change',updateEconomyUI);
-$('hire-worker').addEventListener('click',()=>{const r=hireWorker(world,Number($('town-choice').value));$('economy-message').textContent=r.error||`Worker hired in ${world.economy.towns.find(t=>t.id===r.worker.homeTown).name}. Choose their repeating job.`;if(r.worker){economyListStamp='';updateEconomyUI();$('worker-choice').value=String(r.worker.id);$('worker-job').value=economySelection?.kind==='farm'?'farm':'idle';changed();saveCurrent();}updateEconomyUI();});
+$('worker-choice').addEventListener('change',()=>{selectedVillagerId=Number($('worker-choice').value)||null;$('economy-message').textContent='';syncWorkerChoice();updateEconomyUI();});$('town-choice').addEventListener('change',()=>{$('economy-message').textContent='';updateEconomyUI();});$('worker-job').addEventListener('change',updateEconomyUI);
+$('hire-worker').addEventListener('click',()=>{const r=hireWorker(world,Number($('town-choice').value));$('economy-message').textContent=r.error||`Worker hired in ${world.economy.towns.find(t=>t.id===r.worker.homeTown).name}. Choose their repeating job.`;if(r.worker){economyListStamp='';updateEconomyUI();$('worker-choice').value=String(r.worker.id);selectedVillagerId=r.worker.id;$('worker-job').value=economySelection?.kind==='farm'?'farm':'idle';changed();saveCurrent();}updateEconomyUI();});
 $('assign-worker').addEventListener('click',()=>{const kind=$('worker-job').value,a=kind==='idle'?null:{kind,farm:Number($('worker-farm').value),...(kind==='delivery'?{town:Number($('town-choice').value)}:{})};const r=assignWorker(world,Number($('worker-choice').value),a);$('economy-message').textContent=r.error||(a?'Job assigned. The worker will repeat it automatically.':'Unassigned. Any carried harvest returns to its farm first.');changed();saveCurrent();updateEconomyUI();});
 $('apply-crop').addEventListener('click',()=>{if(economySelection?.kind!=='farm')return;setCrop(world,economySelection.id,$('crop-choice').value||null);$('economy-message').textContent='Crop choice saved. Unharvested work restarts; stored harvest stays.';changed();saveCurrent();updateEconomyUI();});
 $('edit-farm-land').addEventListener('click',()=>{const id=economySelection.id;openAllotment(id);});
@@ -570,7 +574,7 @@ function drawEconomy(left,top){const e=world.economy;if(!e)return;
   }else{ctx.fillStyle='#c9b18b';ctx.fillRect(x,y,Math.max(12,w),Math.max(10,h));ctx.strokeStyle='#f2dfb9';ctx.lineWidth=1.5;ctx.strokeRect(x,y,Math.max(12,w),Math.max(10,h));}
   ctx.fillStyle='#fff1cf';ctx.font='12px Arial';ctx.fillText(t.name,x,y-6);
  }
- const selected=Number($('worker-choice').value);for(const w of e.workers){const x=(w.x-left)*zoom,y=(w.y-top)*zoom;if(economySelection&&selected===w.id&&w.path.length){ctx.strokeStyle='#f0cf7866';ctx.lineWidth=1.5;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(x,y);for(const p of w.path.slice(w.step))ctx.lineTo((p.x-left)*zoom,(p.y-top)*zoom);ctx.stroke();ctx.setLineDash([]);}if(x<-30||y<-30||x>width+30||y>height+30)continue;const size=Math.max(4,Math.min(8,zoom*.5));ctx.fillStyle=w.unpaid?'#df8970':'#f5e2a3';ctx.strokeStyle='#40392a';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x,y,size,0,Math.PI*2);ctx.fill();ctx.stroke();if(w.assignment?.kind==='delivery'||w.cargo){ctx.fillStyle=w.cargo?'#d8a454':'#837655';ctx.fillRect(x+size+2,y-size,Math.max(8,size*2),size*2);ctx.strokeRect(x+size+2,y-size,Math.max(8,size*2),size*2);if(w.cargo){ctx.fillStyle='#fff3ca';ctx.font='10px Arial';ctx.fillText(`${w.cargo.kg} kg`,x-5,y-size-5);}}ctx.fillStyle='#fff5da';ctx.font='10px Arial';if(economySelection&&selected===w.id)ctx.fillText(`W${w.id}`,x-size,y+size+12);}
+ const selected=selectedVillagerId??(economySelection?Number($('worker-choice').value):null);for(const w of e.workers){const x=(w.x-left)*zoom,y=(w.y-top)*zoom;if(selected===w.id&&w.path.length){ctx.strokeStyle='#f0cf7866';ctx.lineWidth=1.5;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(x,y);for(const p of w.path.slice(w.step))ctx.lineTo((p.x-left)*zoom,(p.y-top)*zoom);ctx.stroke();ctx.setLineDash([]);}if(x<-30||y<-30||x>width+30||y>height+30)continue;const size=Math.max(4,Math.min(8,zoom*.5));ctx.fillStyle=w.unpaid?'#df8970':'#f5e2a3';ctx.strokeStyle='#40392a';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x,y,size,0,Math.PI*2);ctx.fill();ctx.stroke();if(w.assignment?.kind==='delivery'||w.cargo){ctx.fillStyle=w.cargo?'#d8a454':'#837655';ctx.fillRect(x+size+2,y-size,Math.max(8,size*2),size*2);ctx.strokeRect(x+size+2,y-size,Math.max(8,size*2),size*2);if(w.cargo){ctx.fillStyle='#fff3ca';ctx.font='10px Arial';ctx.fillText(`${w.cargo.kg} kg`,x-5,y-size-5);}}ctx.fillStyle='#fff5da';ctx.font='10px Arial';if(selected===w.id)drawVillagerSelection(w,x,y,size);}
  for(const f of e.farms){const site=world.construction.sites[world.construction.farms.find(g=>g.id===f.farm)?.controller];if(!site||site.progress<1||!f.crop)continue;const x=(site.x-left)*zoom,y=(site.y-top)*zoom;if(x<0||y<0||x>width||y>height)continue;ctx.fillStyle='#f1d780';ctx.font='11px Arial';ctx.fillText(CROPS[f.crop].name,x,y+site.h*zoom+14);}
 }
 
@@ -585,9 +589,113 @@ function drawMapSymbols(left,top){
   const tw=ctx.measureText(symbol.label).width+10,above=symbol.kind==='town';let box,anchor;
   if(above){const start={x,y:y-8};outer:for(let row=0;row<labels.length+markers.length+3;row++)for(const offset of [0,-tw-12,tw+12]){const candidate={x:Math.min(width-tw-4,Math.max(4,x-tw/2+offset)),y:y-32-row*20,w:tw,h:19},end={x:Math.max(candidate.x+5,Math.min(candidate.x+tw-5,x)),y:candidate.y+19};if([...labels,...markers].some(b=>boxesOverlap(candidate,b)))continue;if(labels.some(b=>mapLineHits(start,end,b)))continue;if(markers.some(b=>Math.abs(b.x+9-x)>1||Math.abs(b.y+9-y)>1?mapLineHits(start,end,b):false))continue;box=candidate;anchor=end;break outer;}}
   if(!box){let lx=Math.min(width-tw-4,Math.max(4,above?x-tw/2:x+12)),ly=above?y-32:Math.max(4,y-9);for(let n=0;n<labels.length+markers.length+1&&[...labels,...markers].some(b=>boxesOverlap({x:lx,y:ly,w:tw,h:19},b));n++)ly+=above?-20:20;box={x:lx,y:ly,w:tw,h:19};anchor={x:above?lx+tw/2:lx,y:above?ly+19:ly+9};}
-  labels.push({...box,text:symbol.label});ctx.strokeStyle='#ece7c288';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(above?x:x+7,above?y-8:y);ctx.lineTo(anchor.x,anchor.y);ctx.stroke();mapHits.push({kind:symbol.kind,id:symbol.id,x:x-9,y:y-9,w:18,h:18},{kind:symbol.kind,id:symbol.id,...box});
+  labels.push({...box,text:symbol.label});ctx.strokeStyle='#ece7c288';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(above?x:x+7,above?y-8:y);ctx.lineTo(anchor.x,anchor.y);ctx.stroke();mapHits.push({kind:symbol.kind,id:symbol.id,x:x-9,y:y-9,w:18,h:18},{kind:symbol.kind,id:symbol.id,...box,isLabel:true});
  }
  for(const b of labels){ctx.fillStyle='#293d32e8';ctx.fillRect(b.x,b.y,b.w,b.h);ctx.fillStyle='#f5ebcf';ctx.fillText(b.text,b.x+5,b.y+14);}
  const d=game.drone;if(d){const x=(d.x-left)*zoom,y=(d.y-top)*zoom;ctx.fillStyle='#efcf72';ctx.fillRect(x-2,y-2,4,4);}
- for(const w of world.economy?.workers||[]){ctx.fillStyle=w.cargo?'#ffdf83':'#faf0c8';ctx.beginPath();ctx.arc((w.x-left)*zoom,(w.y-top)*zoom,w.cargo?3:2,0,Math.PI*2);ctx.fill();}
+ for(const w of world.economy?.workers||[]){ctx.fillStyle=w.cargo?'#ffdf83':'#faf0c8';ctx.beginPath();ctx.arc((w.x-left)*zoom,(w.y-top)*zoom,w.cargo?3:2,0,Math.PI*2);ctx.fill();if(w.id===selectedVillagerId)drawVillagerSelection(w,(w.x-left)*zoom,(w.y-top)*zoom,w.cargo?3:2);}
 }
+
+
+// The roster reads the simulation. Choosing a person never applies a job.
+function resetVillagers(){selectedVillagerId=null;villagerListStamp='';closeVillagers();}
+function closeVillagers(){
+  $('villager-panel').hidden=true;
+  $('open-villagers').setAttribute('aria-expanded','false');
+}
+function showVillagers(id=selectedVillagerId){
+  cancelTool();
+  if(id===null)id=world.economy?.workers[0]?.id??null;
+  selectedVillagerId=id;
+  $('villager-panel').hidden=false;
+  $('open-villagers').setAttribute('aria-expanded','true');
+  updateVillagersUI();
+}
+function villagerJob(w){
+  const a=w.assignment;
+  if(!a)return 'Unassigned';
+  if(a.kind==='farm')return `Farm ${a.farm}`;
+  const town=world.economy.towns.find(t=>t.id===a.town);
+  return `Deliver · Farm ${a.farm} → ${town?.name||'town'}`;
+}
+function villagerPay(w){
+  const e=world.economy;
+  if(w.leaving)return 'Leaving after three unpaid months. No wages are owed.';
+  if(w.unpaid){
+    const remaining=Math.max(0,Math.ceil(w.paidUntil+(HIRING.graceMonths-w.missedMonths)*HIRING.period-e.clock));
+    return `Unpaid · ${w.missedMonths} of ${HIRING.graceMonths} grace months used. Leaves in ${remaining}s unless paid. Missed wages are forgiven.`;
+  }
+  return `Paid · ${HIRING.wage} gold/month. Due in ${Math.max(0,Math.ceil(w.paidUntil-e.clock))}s.`;
+}
+function updateVillagersUI(){
+  const e=world?.economy;
+  if(!e||$('villager-panel').hidden)return;
+  $('villager-heading').textContent=`Villagers · ${e.workers.length} hired`;
+  const stamp=e.workers.map(w=>w.id).join(',');
+  if(stamp!==villagerListStamp||!$('villager-list').children.length){
+    const focused=document.activeElement?.dataset.villagerId;
+    $('villager-list').replaceChildren(...e.workers.map(w=>{
+      const button=document.createElement('button');button.type='button';button.dataset.villagerId=String(w.id);
+      const name=document.createElement('strong');name.textContent=`Villager ${w.id}`;
+      const job=document.createElement('span');button.append(name,job);
+      button.addEventListener('click',()=>{selectedVillagerId=w.id;updateVillagersUI();});
+      return button;
+    }));
+    villagerListStamp=stamp;
+    if(focused)$('villager-list').querySelector(`[data-villager-id="${focused}"]`)?.focus({preventScroll:true});
+  }
+  const noSelection=selectedVillagerId===null;
+  $('villager-empty').hidden=e.workers.length>0||!noSelection;
+  $('villager-body').hidden=e.workers.length===0&&noSelection;
+  for(const button of $('villager-list').children){
+    const w=e.workers.find(w=>w.id===Number(button.dataset.villagerId));
+    button.setAttribute('aria-pressed',String(w.id===selectedVillagerId));
+    button.lastElementChild.textContent=w.leaving?'Leaving':villagerJob(w);
+  }
+  const w=e.workers.find(w=>w.id===selectedVillagerId);
+  $('villager-name').textContent=selectedVillagerId===null?'Select a villager':`Villager ${selectedVillagerId}`;
+  $('villager-gone').hidden=!!w||noSelection;
+  $('villager-facts').hidden=!w;
+  $('view-villager').disabled=!w;
+  $('assign-villager').disabled=!w||w.leaving;
+  $('villager-origin').textContent=w?`Hired in ${e.towns.find(t=>t.id===w.homeTown)?.name||'a village'}`:'';
+  if(!w)return;
+  $('villager-job').textContent=villagerJob(w);
+  $('villager-activity').textContent=w.leaving?`Leaving · ${w.note}`:w.note;
+  $('villager-cargo').textContent=w.cargo?`${w.cargo.kg} kg ${CROPS[w.cargo.crop].name.toLowerCase()} from Farm ${w.cargo.farm}`:'Empty';
+  $('villager-pay').textContent=villagerPay(w)+` A game month is ${HIRING.period}s.`;
+}
+function hitVillager(clientX,clientY,pointerType){
+  const bounds=canvas.getBoundingClientRect(),x=clientX-bounds.left,y=clientY-bounds.top;
+  const radius=pointerType==='touch'?12:mapView()?8:Math.max(8,Math.min(8,zoom*.5)+3);
+  let found=null,nearest=radius;
+  // Later-drawn people win exact overlaps. The roster exposes every person there.
+  for(const w of world.economy?.workers||[]){
+    const sx=(w.x-camera.x)*zoom+width/2,sy=(w.y-camera.y)*zoom+height/2;
+    if(sx<0||sy<0||sx>width||sy>height)continue;
+    const distance=Math.hypot(sx-x,sy-y);
+    if(distance<=nearest){found=w;nearest=distance;}
+  }
+  return found;
+}
+function drawVillagerSelection(w,x,y,size){
+  if(x<0||y<0||x>width||y>height)return;
+  ctx.save();ctx.strokeStyle='#fff1b8';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(x,y,size+5,0,Math.PI*2);ctx.stroke();
+  const label=`Villager ${w.id}`;ctx.font='bold 11px Arial';
+  const tw=ctx.measureText(label).width+10,lx=Math.max(3,Math.min(width-tw-3,x-tw/2)),ly=y+size+10;
+  ctx.fillStyle='#20382df2';ctx.fillRect(lx,ly,tw,18);ctx.fillStyle='#fff1c0';ctx.fillText(label,lx+5,ly+13);ctx.restore();
+}
+$('open-villagers').addEventListener('click',()=>{$('villager-panel').hidden?showVillagers():closeVillagers();});
+$('close-villagers').addEventListener('click',()=>{closeVillagers();$('open-villagers').focus();});
+$('view-villager').addEventListener('click',()=>{
+  const w=world.economy.workers.find(w=>w.id===selectedVillagerId);if(!w)return;
+  closeVillagers();
+  const toolbarHeight=document.querySelector('.toolbar').getBoundingClientRect().height;
+  setZoom(Math.min(16,width/35));
+  camera={x:w.x,y:w.y-toolbarHeight/(2*zoom)};changed();canvas.focus({preventScroll:true});
+});
+$('assign-villager').addEventListener('click',()=>{
+  const w=world.economy.workers.find(w=>w.id===selectedVillagerId);if(!w||w.leaving)return;
+  showEconomy({kind:'worker',id:w.id});$('worker-job').focus();
+});
