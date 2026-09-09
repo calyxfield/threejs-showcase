@@ -8,6 +8,7 @@ const $ = id => document.getElementById(id);
 const canvas = $('world'), ctx = canvas.getContext('2d', { alpha: false });
 const form = $('settings');
 const RASTER_TILE = 16, RASTER_LIMIT = 64;
+const OVERVIEW_SIZE=128,OVERVIEW_LIMIT=160,OVERVIEW_TARGET=3,OVERVIEW_SAMPLES=640;
 const rasters = new Map(), overviews = new Map(), keys = new Set();
 let economySelection=null,economyListStamp='',detailReturn=null,mapHits=[];
 const MAP_ZOOM=2;
@@ -16,7 +17,7 @@ let active = null, screen = 'menu', dirty = false, lastSaved = 0, lastChanged = 
 let farmDraft = null, farmErase = false, farmPreview = null, farmDraftEntries = [];
 let controllerPlacement = false, selectedFarm = null, farmGesture = 'rectangle', brushSize = 8, brushCursor = null;
 let placement = null, cutting = false, selection = null, orderError = '', simulationAt = 0;
-let overviewCells = 0, overviewChunks = 0, overviewBuildMs = 0;
+let overviewCells = 0, overviewChunks = 0, overviewBuildMs = 0,overviewBuilds=0,overviewFinePixels=0;
 let world, camera, width = 1, height = 1, zoom = 30, last = 0, drag = null;
 let visibleChunks = 0, frameCount = 0, frameMs = 0, statsAt = 0;
 let renderedStateRevision = 0;
@@ -460,25 +461,24 @@ function updateStats() {
 function overviewChunk(cx, cy, step) {
   const key = `${mapView()?'map':'terrain'}:${step}:${cx},${cy}`;
   if (overviews.has(key)) { const raster = overviews.get(key); overviews.delete(key); overviews.set(key, raster); return raster; }
-  const start = performance.now(), raster = document.createElement('canvas'); raster.width = raster.height = 32;
-  const c = raster.getContext('2d'), pixels = c.createImageData(32, 32);
-  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
-    let cover = 0, field = 0, meadowCover = 0;
-    for (const [ox, oy] of [[.25,.25],[.75,.25],[.25,.75],[.75,.75]]) {
-      const wx = (cx * 32 + x + ox) * step, wy = (cy * 32 + y + oy) * step;
-      const f = world.field(wx, wy), meadow = world.isGrassland(wx, wy);
-      const t = Math.max(0, Math.min(1, (f - .27) / .43));
-      field += f / 4; meadowCover += meadow ? .25 : 0; cover += meadow ? 0 : t * t * (3 - 2 * t) * world.settings.density / 100 * .92 / 4;
-    }
-    const i = (y * 32 + x) * 4;
-    if(mapView()){const color=meadowCover>=.5?[173,177,123]:cover>=.22?[75,111,81]:[137,153,102];pixels.data.set([...color,255],i);continue;}
-    pixels.data[i] = 148 - field * 22 - cover * 65 + meadowCover * 20;
-    pixels.data[i+1] = 161 - field * 18 - cover * 58 + meadowCover * 15;
-    pixels.data[i+2] = 103 - field * 17 - cover * 28 + meadowCover * 10; pixels.data[i+3] = 255;
+  // Shared world-aligned sample points plus a one-sample neighbor border keep interpolation seamless.
+  const start=performance.now(),size=OVERVIEW_SIZE+3,raster=document.createElement('canvas');raster.width=raster.height=size;
+  const c=raster.getContext('2d'),pixels=c.createImageData(size,size),map=mapView();
+  for(let y=0;y<size;y++)for(let x=0;x<size;x++){
+    const wx=(cx*OVERVIEW_SIZE+x-1)*step,wy=(cy*OVERVIEW_SIZE+y-1)*step,f=world.field(wx,wy),meadow=world.isGrassland(wx,wy)?1:0;
+    const t=Math.max(0,Math.min(1,(f-.27)/.43)),cover=meadow?0:t*t*(3-2*t)*world.settings.density/100*.92,i=(y*size+x)*4;
+    if(map){const color=meadow?[173,177,123]:cover>=.22?[75,111,81]:[137,153,102];pixels.data[i]=color[0];pixels.data[i+1]=color[1];pixels.data[i+2]=color[2];}
+    else{pixels.data[i]=148-f*22-cover*65+meadow*20;pixels.data[i+1]=161-f*18-cover*58+meadow*15;pixels.data[i+2]=103-f*17-cover*28+meadow*10;}pixels.data[i+3]=255;
   }
-  c.putImageData(pixels, 0, 0); overviews.set(key, raster); overviewBuildMs += performance.now() - start;
-  if (overviews.size > 64) { const oldest = overviews.keys().next().value, old = overviews.get(oldest); old.width = old.height = 0; overviews.delete(oldest); }
-  return raster;
+  c.putImageData(pixels,0,0);overviews.set(key,raster);overviewBuildMs+=performance.now()-start;overviewBuilds++;
+  if(overviews.size>OVERVIEW_LIMIT){const oldest=overviews.keys().next().value,old=overviews.get(oldest);old.width=old.height=0;overviews.delete(oldest);}return raster;
+}
+function drawOverviewLayer(left,top,right,bottom,step,alpha){
+  if(alpha<=.001)return;const metres=OVERVIEW_SIZE*step,pixels=step*zoom,dpr=Math.min(devicePixelRatio||1,2);ctx.globalAlpha=alpha;
+  for(let cy=Math.floor(top/metres);cy<=Math.floor(bottom/metres);cy++)for(let cx=Math.floor(left/metres);cx<=Math.floor(right/metres);cx++){
+    const x=(cx*metres-left)*zoom,y=(cy*metres-top)*zoom,x0=Math.floor(x*dpr)/dpr,y0=Math.floor(y*dpr)/dpr,x1=Math.floor((x+metres*zoom)*dpr)/dpr,y1=Math.floor((y+metres*zoom)*dpr)/dpr;
+    ctx.save();ctx.beginPath();ctx.rect(x0,y0,x1-x0,y1-y0);ctx.clip();ctx.drawImage(overviewChunk(cx,cy,step),x-1.5*pixels,y-1.5*pixels,(OVERVIEW_SIZE+3)*pixels,(OVERVIEW_SIZE+3)*pixels);ctx.restore();overviewChunks++;overviewCells+=(OVERVIEW_SIZE+3)**2;
+  }ctx.globalAlpha=1;
 }
 function draw(now) {
   requestAnimationFrame(draw);
@@ -496,16 +496,14 @@ function draw(now) {
   pan(dt);
   const left = camera.x - width / zoom / 2, top = camera.y - height / zoom / 2;
   const right = left + width / zoom, bottom = top + height / zoom;
-  const detailed = detailView(), samplePixels = Math.max(12, width / 192, height / 192);
-  const step = detailed ? 1 : 2 ** Math.ceil(Math.log2(samplePixels / zoom)), chunkMetres = CHUNK_SIZE * step;
-  visibleChunks = 0; overviewCells = 0; overviewChunks = 0;
-  for (let cy = Math.floor(top/chunkMetres); cy <= Math.floor(bottom/chunkMetres); cy++) {
-    for (let cx = Math.floor(left/chunkMetres); cx <= Math.floor(right/chunkMetres); cx++) {
-      const x = (cx*chunkMetres-left)*zoom, y = (cy*chunkMetres-top)*zoom;
-      const x0 = Math.round(x), y0 = Math.round(y), x1 = Math.round(x+chunkMetres*zoom), y1 = Math.round(y+chunkMetres*zoom);
-      ctx.drawImage(detailed ? rasterChunk(cx,cy) : overviewChunk(cx,cy,step),x0,y0,x1-x0,y1-y0);
-      visibleChunks++; if (!detailed) { overviewChunks++; overviewCells += 1024; }
+  const detailed=detailView();visibleChunks=0;overviewCells=0;overviewChunks=0;
+  if(detailed){ctx.imageSmoothingEnabled=false;const metres=CHUNK_SIZE;
+    for(let cy=Math.floor(top/metres);cy<=Math.floor(bottom/metres);cy++)for(let cx=Math.floor(left/metres);cx<=Math.floor(right/metres);cx++){
+      const x=(cx*metres-left)*zoom,y=(cy*metres-top)*zoom,x0=Math.round(x),y0=Math.round(y),x1=Math.round(x+metres*zoom),y1=Math.round(y+metres*zoom);ctx.drawImage(rasterChunk(cx,cy),x0,y0,x1-x0,y1-y0);visibleChunks++;
     }
+  }else{
+    const target=Math.max(OVERVIEW_TARGET,width/OVERVIEW_SAMPLES,height/OVERVIEW_SAMPLES),level=Math.log2(target/zoom),fine=2**Math.floor(level),blend=level-Math.floor(level);overviewFinePixels=fine*zoom;
+    ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='low';drawOverviewLayer(left,top,right,bottom,fine,1);drawOverviewLayer(left,top,right,bottom,fine*2,blend);ctx.imageSmoothingEnabled=false;visibleChunks=overviewChunks;
   }
   if (detailed) {
   const gridStep = zoom >= 16 ? 1 : 8;
@@ -538,7 +536,7 @@ window.woodland = Object.freeze({
   get screen(){return screen;},
   get name(){return active?.name;},
   get camera(){return {...camera};},
-  get metrics(){return {frames:frameCount,meanWorkMs:frameMs/Math.max(1,frameCount),dataChunks:world?.chunks.size || 0,rasterChunks:rasters.size,visibleChunks,zoom,overviewCells,overviewChunks,overviewCache:overviews.size,overviewBuildMs,spanMetres:width/zoom,mode:mapView()?'map':detailView()?'detail':'overview'};},
+  get metrics(){return {frames:frameCount,meanWorkMs:frameMs/Math.max(1,frameCount),dataChunks:world?.chunks.size || 0,dataGenerated:world?.generated||0,rasterChunks:rasters.size,visibleChunks,zoom,overviewCells,overviewChunks,overviewCache:overviews.size,overviewBuildMs,overviewBuilds,overviewFinePixels,overviewLimit:OVERVIEW_LIMIT,spanMetres:width/zoom,mode:mapView()?'map':detailView()?'detail':'overview'};},
   tile:(x,y)=>world.tile(x,y),
 });
 for (const key of ['scale', 'detail', 'density']) $(key).value = DEFAULTS[key];
