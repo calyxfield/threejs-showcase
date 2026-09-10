@@ -1,4 +1,5 @@
 export const reservations = new WeakMap(), workerReservations = new WeakMap();
+export const MAX_FIELDS=64;
 export const MAX_FARMS=64,MAX_FARM_TILES=1048576,MAX_FARM_CHUNKS=4096,FARM_RATE=256;
 export const popcount=n=>{n-=n>>>1&0x55555555;n=(n&0x33333333)+(n>>>2&0x33333333);return (((n+(n>>>4))&0x0f0f0f0f)*0x01010101)>>>24;};
 const bits=(a,b)=>((0xffffffff>>>a)<<(a) & (b===32?0xffffffff:(2**b-1)))>>>0;
@@ -58,14 +59,14 @@ export function coverageIntersectsRect(coverage,r){
 }
 export function farmPlacementError(game,coverage,id=null){
  if(!game.ship)return 'Land the ship first.';
- const others=game.farms.filter(f=>f.id!==id);
- if(id===null&&others.length>=MAX_FARMS)return 'Prototype limit: 64 farm buildings.';
- let reserved=combineCoverage(game.soil||[],preparedCoverage(game.farms.find(f=>f.id===id)?.work)),occupied=[];
+ const others=(game.fields||game.farms).filter(f=>f.id!==id);
+ if(id===null&&others.length>=MAX_FIELDS)return 'Prototype limit: 64 fields.';
+ let reserved=combineCoverage(game.soil||[],preparedCoverage((game.fields||game.farms).find(f=>f.id===id)?.work)),occupied=[];
  for(const f of others){reserved=combineCoverage(reserved,f.coverage);occupied=combineCoverage(occupied,f.coverage);}
  reserved=combineCoverage(reserved,coverage);
  if(coverageLimit(reserved))return 'Land limit: 1,048,576 tiles, including prepared ground. Keep scattered fields within 4,096 regions.';
  if(coverageIntersectsRect(coverage,game.ship)||[...game.sites,...(reservations.get(game)||[])].some(s=>coverageIntersectsRect(coverage,s)))return 'Allotment overlaps the ship or a building.';
- if(coverageArea(combineCoverage(coverage,occupied,true))!==coverageArea(coverage))return 'These tiles already belong to another farm.';
+ if(coverageArea(combineCoverage(coverage,occupied,true))!==coverageArea(coverage))return 'These tiles already belong to another field.';
  return '';
 }
 export function compileCoverage(coverage){
@@ -83,7 +84,7 @@ export class FarmIndex{
  sectionEnd(id,count){const{c}=this.entryAt(id,count);return c.start+c.count;}
  target(id,count=0){const{c}=this.entryAt(id,count);const local=count-c.start;let y=0;while(c.prefix[y+1]<=local)y++;const v=((c.rows?c.rows[y]:0xffffffff)&~preparedRow(c,y,local))>>>0;return{x:c.cx*32+31-Math.clz32((v&-v)>>>0)+.5,y:c.cy*32+y+.5};}
 }
-export function bindFarms(world,game){world.farmCoverage=new FarmIndex(game?.farms||[],game?.soil||[]);return world.farmCoverage;}
+export function bindFarms(world,game){world.farmCoverage=new FarmIndex(game?.fields||game?.farms||[],game?.soil||[]);return world.farmCoverage;}
 // A swept square brush is rasterized into row spans in one bounded mask pass.
 export function brushCoverage(coverage,a,b,size,erase=false){
  if(!Number.isInteger(size)||size<1||size>1024||![a.x,a.y,b.x,b.y].every(n=>Number.isSafeInteger(n)&&Math.abs(n)<=1e9))return{error:'Invalid brush position.'};
@@ -106,4 +107,18 @@ export function brushCoverage(coverage,a,b,size,erase=false){
  const patch=[...map.values()].map(e=>e[2].every(v=>v===0xffffffff)?e.slice(0,2):e),result=combineCoverage(coverage,patch,erase);
  if(coverageLimit(result))return{error:'Allotment limit: 1,048,576 tiles / 4,096 regions.'};
  return{coverage:result,area:coverageArea(result)};
+}
+
+// Fields own editable land and drone preparation. Farms own buildings and crop stores.
+export function farmFields(game,id){return (game.fields||[]).filter(f=>f.assignedFarm===id);}
+export function refreshFarmCoverage(game){
+ for(const farm of game.farms){let coverage=[];for(const field of farmFields(game,farm.id))coverage=combineCoverage(coverage,field.coverage);farm.coverage=coverage;farm.area=coverageArea(coverage);farm.work=null;}
+}
+export function allPreparedCoverage(game){let coverage=game.soil||[];for(const f of game.fields||game.farms)coverage=combineCoverage(coverage,preparedCoverage(f.work));return coverage;}
+export function validateFields(game){
+ const fields=game.fields;if(!Array.isArray(fields)||fields.length>MAX_FIELDS)throw Error('Invalid field list.');
+ validateFarms(fields.map(f=>({...f,controller:null})),game.soil);
+ for(const f of fields){if(!(f.assignedFarm===null||game.farms.some(g=>g.id===f.assignedFarm))||Object.hasOwn(f,'requestedFarm')&&!(f.requestedFarm===null||game.farms.some(g=>g.id===f.requestedFarm)))throw Error('Invalid field assignment.');}
+ for(const farm of game.farms){let coverage=[];for(const f of farmFields(game,farm.id))coverage=combineCoverage(coverage,f.coverage);if(combineCoverage(coverage,farm.coverage,true).length||combineCoverage(farm.coverage,coverage,true).length)throw Error('Farm land does not match its assigned fields.');if(farm.work!==null)throw Error('Field preparation must belong to a field.');}
+ return fields;
 }

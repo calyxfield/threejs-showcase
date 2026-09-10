@@ -1,5 +1,5 @@
-import {WORKER_HALL,BUILD_SECONDS,CUT_SECONDS,jobKey} from './construction.mjs';
-import {combineCoverage,coverageArea,coverageContains,coverageIntersectsRect,preparedCoverage,compileCoverage,validateCoverage,reservations,workerReservations} from './farms.mjs';
+import {processFieldAssignments,WORKER_HALL,BUILD_SECONDS,CUT_SECONDS,jobKey} from './construction.mjs';
+import {combineCoverage,coverageArea,coverageContains,coverageIntersectsRect,compileCoverage,validateCoverage,reservations,workerReservations,allPreparedCoverage} from './farms.mjs';
 // Prototype balance, deliberately separate from production recipes and hiring policy.
 export const BALANCE={startingGold:80,maxWorkers:32,storageKg:256,carryKg:24,walkSpeed:10,woodlandFactor:.65,sowRate:16,harvestRate:24,maxRouteDistance:2048,maxRouteNodes:12000};
 export const VILLAGES={layout:2,width:48,height:36,houses:20,firstRadius:448,ringStep:128,rings:12,minSeparation:512};
@@ -20,7 +20,7 @@ export function validateEconomy(e,game,seed=0){
  if(!e||e.version!==3||typeof e.settled!=='boolean'||!Number.isFinite(e.clock)||e.clock<0||!integer(e.gold)||!Array.isArray(e.towns)||e.towns.length>2||!Array.isArray(e.workers)||e.workers.length>BALANCE.maxWorkers||!Array.isArray(e.farms)||e.farms.length>64||!integer(e.nextWorker)||!e.sold||!Object.keys(CROPS).every(k=>integer(e.sold[k])))throw Error('Invalid farming/trade state.');
  e.lastDeparture??='';if(typeof e.lastDeparture!=='string'||e.lastDeparture.length>160)throw Error('Invalid departure notice.');
  const towns=new Set(),ids=new Set(),farms=new Set();
- for(const t of e.towns){if(!integer(t.id)||towns.has(t.id)||!point(t)||!Number.isInteger(t.x)||!Number.isInteger(t.y)||!(((t.layout??1)===1&&t.w===18&&t.h===14)||(t.layout===VILLAGES.layout&&t.w===VILLAGES.width&&t.h===VILLAGES.height))||typeof t.name!=='string'||t.name.length>40)throw Error('Invalid town.');if(game?.ship&&overlap(t,game.ship)||game?.sites.some(s=>overlap(t,s))||e.towns.some(other=>other!==t&&overlap(t,other))||game&&coverageIntersectsRect(game.soil,t)||game?.farms.some(f=>coverageIntersectsRect(f.coverage,t)))throw Error('Town overlaps occupied land.');towns.add(t.id);}
+ for(const t of e.towns){if(!integer(t.id)||towns.has(t.id)||!point(t)||!Number.isInteger(t.x)||!Number.isInteger(t.y)||!(((t.layout??1)===1&&t.w===18&&t.h===14)||(t.layout===VILLAGES.layout&&t.w===VILLAGES.width&&t.h===VILLAGES.height))||typeof t.name!=='string'||t.name.length>40)throw Error('Invalid town.');if(game?.ship&&overlap(t,game.ship)||game?.sites.some(s=>overlap(t,s))||e.towns.some(other=>other!==t&&overlap(t,other))||game&&coverageIntersectsRect(game.soil,t)||(game?.fields||game?.farms)?.some(f=>coverageIntersectsRect(f.coverage,t)))throw Error('Town overlaps occupied land.');towns.add(t.id);}
  for(const f of e.farms){if(!integer(f.farm)||farms.has(f.farm)||!game?.farms.some(x=>x.id===f.farm)||!(f.crop===null||CROPS[f.crop])||!Object.keys(CROPS).every(k=>integer(f.stock?.[k])&&f.stock[k]<=BALANCE.storageKg)||!integer(f.cycles))throw Error('Invalid crop storage.');farms.add(f.farm);
   if(f.cycle){const c=f.cycle;validateCoverage(c.coverage);if(!CROPS[c.crop]||!['sowing','growing','harvesting'].includes(c.phase)||c.area!==coverageArea(c.coverage)||!c.area||!Number.isFinite(c.work)||c.work<0||c.work>c.area||!Number.isFinite(c.grown)||c.grown<0||c.grown>CROPS[c.crop].growSeconds||!integer(c.paid)||c.paid>Math.floor(c.area*CROPS[c.crop].kgPerTile))throw Error('Invalid crop cycle.');}
  }
@@ -84,7 +84,7 @@ export function ensureTowns(world){
   for(let ring=0;ring<VILLAGES.rings&&!found;ring++)for(let n=0;n<8&&!found;n++){
    const angle=(n+(world.seed%8)+(id===2?4:0))*Math.PI/4,radius=VILLAGES.firstRadius+ring*VILLAGES.ringStep,t={id,name:names[id-1],layout:VILLAGES.layout,x:Math.round(center.x+Math.cos(angle)*radius)-VILLAGES.width/2,y:Math.round(center.y+Math.sin(angle)*radius)-VILLAGES.height/2,w:VILLAGES.width,h:VILLAGES.height};
    const space={x:t.x-4,y:t.y-4,w:t.w+8,h:t.h+8};
-   if(e.towns.some(other=>Math.hypot(other.x+other.w/2-t.x-t.w/2,other.y+other.h/2-t.y-t.h/2)<VILLAGES.minSeparation)||g.jobs.some(job=>job.kind==='cut'&&inside({x:job.x+.5,y:job.y+.5},space))||overlap(space,g.ship)||g.sites.some(s=>overlap(space,s))||e.towns.some(s=>overlap(space,s))||coverageIntersectsRect(g.soil,space)||g.farms.some(f=>coverageIntersectsRect(f.coverage,space)))continue;found=t;
+   if(e.towns.some(other=>Math.hypot(other.x+other.w/2-t.x-t.w/2,other.y+other.h/2-t.y-t.h/2)<VILLAGES.minSeparation)||g.jobs.some(job=>job.kind==='cut'&&inside({x:job.x+.5,y:job.y+.5},space))||overlap(space,g.ship)||g.sites.some(s=>overlap(space,s))||e.towns.some(s=>overlap(space,s))||coverageIntersectsRect(g.soil,space)||(g.fields||g.farms).some(f=>coverageIntersectsRect(f.coverage,space)))continue;found=t;
   }
   if(!found)break;e.towns.push(found);
   for(let cy=Math.floor(found.y/32);cy<=Math.floor((found.y+found.h)/32);cy++)for(let cx=Math.floor(found.x/32);cx<=Math.floor((found.x+found.w)/32);cx++)world.state.markChunkChanged(cx,cy);
@@ -186,7 +186,7 @@ function beginDelivery(world,w,f){
  if(!chosen){w.note='Harvest stored; no reachable village market';return false;}
  const kg=Math.min(BALANCE.carryKg,f.stock[crop]);f.stock[crop]-=kg;w.cargo={farm:f.farm,crop,kg};w.assignment={kind:'delivery',farm:f.farm,town:chosen.t.id};startTravel(world,w,chosen.target);return true;
 }
-function cycleCoverage(world,id){const f=world.construction.farms.find(f=>f.id===id),prepared=combineCoverage(world.construction.soil,preparedCoverage(f.work));return combineCoverage(f.coverage,combineCoverage(f.coverage,prepared,true),true);}
+function cycleCoverage(world,id){const f=world.construction.farms.find(f=>f.id===id),prepared=allPreparedCoverage(world.construction);return combineCoverage(f.coverage,combineCoverage(f.coverage,prepared,true),true);}
 function beginCycle(world,f){const farm=world.construction.farms.find(g=>g.id===f.farm);if(!f.crop||farm?.controller===null||world.construction.sites[farm.controller].progress!==1)return;const coverage=cycleCoverage(world,f.farm),area=coverageArea(coverage);if(area)f.cycle={crop:f.crop,coverage,area,phase:'sowing',work:0,grown:0,paid:0};}
 function moveWorker(world,w,dt){
  if(w.step>=w.path.length)return true;let time=dt;
@@ -250,10 +250,11 @@ function workerStep(world,w,dt){
  const kg=Math.min(BALANCE.carryKg,f.stock[crop]);f.stock[crop]-=kg;w.cargo={farm:a.farm,crop,kg};const t=world.economy.towns.find(t=>t.id===a.town);startTravel(world,w,{...door(t),kind:'town',id:t.id,label:t.name});
 }
 export function advanceEconomy(world,seconds){
- if(!world.construction?.ship||!Number.isFinite(seconds)||seconds<=0)return false;bindEconomy(world);ensureTowns(world);refreshWorkplaces(world);const e=world.economy;
+ if(!world.construction?.ship||!Number.isFinite(seconds)||seconds<=0)return false;bindEconomy(world);ensureTowns(world);processFieldAssignments(world);refreshWorkplaces(world);const e=world.economy;
  // Small deterministic simulation slices keep arrival/work transitions ordered.
  let remaining=seconds,changed=false;
  while(remaining>1e-8){const dt=Math.min(.25,remaining);remaining-=dt;e.clock+=dt;changed=true;
+  if(processFieldAssignments(world))refreshWorkplaces(world);
   allocateHouses(world);
   for(const w of [...e.workers]){payroll(e,w);if(w.leaving)departureStep(world,w,dt);else workerStep(world,w,dt);}
   const labor=new Map();for(const w of e.workers)if(!w.leaving&&w.phase==='farm'&&w.assignment?.kind==='farm')labor.set(w.assignment.farm,(labor.get(w.assignment.farm)||0)+1);
