@@ -1,6 +1,9 @@
 import {validateFarms,coverageIntersectsRect,farmPlacementError,coverageArea,bindFarms,FARM_RATE,combineCoverage,preparedCoverage,patchCoverage,reservations,workerReservations} from './farms.mjs';
 export const SHIP = Object.freeze({ w: 40, h: 12 });
 export const BUILDING = Object.freeze({ w: 6, h: 6 });
+export const WORKER_HALL = Object.freeze({ w: 15, h: 10, capacity: 10 });
+export const jobKey = job => job.kind === 'build' ? `build:${job.site}` : job.kind === 'cut' ? `cut:${job.x},${job.y}` : `farm:${job.farm}`;
+export const droneJob = game => game.jobs.find(j=>j.claimant==='drone');
 export const BUILD_SECONDS = 6;
 export const DRONE_SPEED = 24;
 export const CUT_SECONDS = 2;
@@ -11,7 +14,7 @@ const point = p => p && Number.isFinite(p.x) && Number.isFinite(p.y) && Math.abs
 const grid = p => point(p) && Number.isInteger(p.x) && Number.isInteger(p.y);
 const footprint = (p, size) => grid(p) && p.w === size.w && p.h === size.h;
 export function newConstruction() {
-  return { version: 4, soil: [], farms: [], jobs: [], ship: null, pending: { x: -20, y: -6 }, sites: [], cursor: 0, drone: null };
+  return { version: 5, soil: [], farms: [], jobs: [], ship: null, pending: { x: -20, y: -6 }, sites: [], cursor: 0, drone: null };
 }
 function validateLegacy(game) {
   if (!game || !Array.isArray(game.sites) || game.sites.length > MAX_SITES || !Number.isInteger(game.cursor) || game.cursor < 0 || game.cursor > game.sites.length) throw new Error('Invalid construction state.');
@@ -22,7 +25,7 @@ function validateLegacy(game) {
   if (!footprint(game.ship, SHIP) || game.pending !== null || !point(game.drone) || !['idle','outbound','building','returning'].includes(game.drone.stage)) throw new Error('Invalid ship or drone state.');
   for (let i = 0; i < game.sites.length; i++) {
     const site = game.sites[i];
-    if (!footprint(site, BUILDING) || !Number.isFinite(site.progress) || site.progress < 0 || site.progress > 1 || (i < game.cursor ? site.progress !== 1 : i > game.cursor && site.progress !== 0) || overlaps(site, game.ship)) throw new Error('Invalid building state.');
+    if (!footprint(site, site.hall?WORKER_HALL:BUILDING) || site.hall!==undefined&&(site.hall!==true||site.house!==undefined||site.farm!==undefined) || !Number.isFinite(site.progress) || site.progress < 0 || site.progress > 1 || (i < game.cursor ? site.progress !== 1 : i > game.cursor && site.progress !== 0) || overlaps(site, game.ship)) throw new Error('Invalid building state.');
     for (let j = 0; j < i; j++) if (overlaps(site, game.sites[j])) throw new Error('Saved buildings overlap.');
   }
   if (['outbound','building'].includes(game.drone.stage) && game.cursor >= game.sites.length) throw new Error('Drone target is missing.');
@@ -37,8 +40,9 @@ export function validateConstruction(input) {
   }
   if (game?.version === 2) game = {...game,version:3,farms:[]};
   if (game?.version === 3) game={...game,version:4,soil:[],farms:game.farms.map(f=>({id:f.id,controller:null,coverage:f.coverage,area:f.area,work:{coverage:structuredClone(f.coverage),area:f.area,progress:f.progress}}))};
+  if(game?.version===4){game.version=5;for(const job of game.jobs)job.claimant=null;if(['outbound','building','cutting','preparing'].includes(game.drone?.stage)&&game.jobs[0])game.jobs[0].claimant='drone';}
   if (game) validateFarms(game.farms,game.soil);
-  if (!game || game.version !== 4 || !Array.isArray(game.jobs) || game.jobs.length > MAX_SITES || !Array.isArray(game.sites) || game.sites.length > MAX_SITES || !Number.isInteger(game.cursor)) throw new Error('Invalid drone queue.');
+  if (!game || game.version !== 5 || !Array.isArray(game.jobs) || game.jobs.length > MAX_SITES || !Array.isArray(game.sites) || game.sites.length > MAX_SITES || !Number.isInteger(game.cursor)) throw new Error('Invalid drone queue.');
   if (!game.ship) {
     if (!grid(game.pending) || game.sites.length || game.cursor || game.jobs.length || game.farms.length || game.soil.length || game.drone !== null) throw new Error('Invalid landing state.');
     return game;
@@ -47,34 +51,32 @@ export function validateConstruction(input) {
   let completed = 0;
   for (let i = 0; i < game.sites.length; i++) {
     const site = game.sites[i];
-    if ((site.farm!==undefined&&(!Number.isInteger(site.farm)||!game.farms.some(f=>f.id===site.farm&&f.controller===i))) || !footprint(site, BUILDING) || !Number.isFinite(site.progress) || site.progress < 0 || site.progress > 1 || overlaps(site, game.ship)) throw new Error('Invalid building state.');
+    if ((site.house!==undefined&&(site.house!==true||site.farm!==undefined)) || (site.farm!==undefined&&(!Number.isInteger(site.farm)||!game.farms.some(f=>f.id===site.farm&&f.controller===i))) || !footprint(site, site.hall?WORKER_HALL:BUILDING) || site.hall!==undefined&&(site.hall!==true||site.house!==undefined||site.farm!==undefined) || !Number.isFinite(site.progress) || site.progress < 0 || site.progress > 1 || overlaps(site, game.ship)) throw new Error('Invalid building state.');
     if (site.progress === 1) completed++;
     for (let j = 0; j < i; j++) if (overlaps(site, game.sites[j])) throw new Error('Saved buildings overlap.');
   }
   if (game.cursor !== completed) throw new Error('Invalid completed-building count.');
   const builds = new Set(), cuts = new Set(), farms = new Set();
+  const claimants=new Set();
   for (let i = 0; i < game.jobs.length; i++) {
-    const job = game.jobs[i];
+    const job = game.jobs[i];job.claimant??=null;
+    if(job.claimant!==null){if(typeof job.claimant!=='string'||!(/^(drone|worker:[1-9][0-9]*)$/).test(job.claimant)||claimants.has(job.claimant)||job.kind==='farm'&&job.claimant!=='drone')throw Error('Invalid job claimant.');claimants.add(job.claimant);}
     if (job.kind === 'build') {
-      if (!Number.isInteger(job.site) || !game.sites[job.site] || builds.has(job.site) || game.sites[job.site].progress === 1 || (i > 0 && game.sites[job.site].progress !== 0)) throw new Error('Invalid build job.');
+      if (!Number.isInteger(job.site) || !game.sites[job.site] || builds.has(job.site) || game.sites[job.site].progress === 1) throw new Error('Invalid build job.');
       builds.add(job.site);
     } else if (job.kind === 'cut') {
       const key = `${job.x},${job.y}`;
-      if (!grid(job) || !Number.isFinite(job.progress) || job.progress < 0 || job.progress >= 1 || (i > 0 && job.progress !== 0) || cuts.has(key)) throw new Error('Invalid cutting job.');
+      if (!grid(job) || !Number.isFinite(job.progress) || job.progress < 0 || job.progress >= 1 || cuts.has(key)) throw new Error('Invalid cutting job.');
       cuts.add(key);
     } else if (job.kind === 'farm') {
       const farm=game.farms.find(f=>f.id===job.farm);
-      if(!farm?.work||farm.work.progress===1||farms.has(job.farm)||(i>0&&farm.work.progress!==0))throw Error('Invalid farm job.');farms.add(job.farm);
+      if(!farm?.work||farm.work.progress===1||farms.has(job.farm))throw Error('Invalid farm job.');farms.add(job.farm);
     } else throw new Error('Unknown drone job.');
   }
   if (builds.size !== game.sites.length - completed) throw new Error('Missing building job.');
   for(const farm of game.farms){if(farm.work&&farm.work.progress<1&&!farms.has(farm.id)||farm.controller!==null&&game.sites[farm.controller]?.farm!==farm.id||coverageIntersectsRect(farm.coverage,game.ship)||game.sites.some(s=>coverageIntersectsRect(farm.coverage,s)))throw Error('Invalid farm footprint or missing job.');}
-  const first = game.jobs[0], stage = game.drone.stage;
-  if (['outbound','building','cutting','preparing'].includes(stage) && !first || stage === 'building' && first?.kind !== 'build' || stage === 'cutting' && first?.kind !== 'cut' || stage === 'preparing' && first?.kind !== 'farm') throw new Error('Drone target is missing or mismatched.');
-  if (first) {
-    const progress = first.kind === 'build' ? game.sites[first.site].progress : first.kind === 'farm' ? game.farms.find(f=>f.id===first.farm).work.progress : first.progress;
-    if (!['building','cutting','preparing'].includes(stage) && !(first.kind==='farm'&&stage==='outbound') && progress !== 0) throw new Error('Invalid work phase.');
-  }
+  const first = droneJob(game), stage = game.drone.stage;
+  if (['outbound','building','cutting','preparing'].includes(stage) && !first || ['idle','returning'].includes(stage)&&first || stage === 'building' && first?.kind !== 'build' || stage === 'cutting' && first?.kind !== 'cut' || stage === 'preparing' && first?.kind !== 'farm') throw new Error('Drone target is missing or mismatched.');
   return game;
 }
 export function selectTrees(world, game, a, b) {
@@ -131,10 +133,11 @@ export function land(world, game) {
   game.drone = { x: game.ship.x + SHIP.w / 2, y: game.ship.y + SHIP.h / 2, stage: 'idle' };
   return true;
 }
-export function placeBuilding(world, game, position) {
-  const rect = { ...position, ...BUILDING };
+export function placeBuilding(world, game, position, house = false) {
+  const hall=house==='hall';
+  const rect = { ...position, ...(hall?WORKER_HALL:BUILDING) };
   if (!game.ship || game.sites.length >= MAX_SITES || game.jobs.length >= MAX_JOBS || !canPlace(game, rect) || !hasEditRoom(world,game,rect)) return false;
-  clearFootprint(world, rect); game.sites.push({ ...rect, progress: 0 }); game.jobs.push({kind:'build',site:game.sites.length-1}); return true;
+  clearFootprint(world, rect); game.sites.push({ ...rect, progress: 0, ...(hall?{hall:true}:house?{house:true}:{}) }); game.jobs.push({kind:'build',site:game.sites.length-1}); return true;
 }
 export function controllerCanPlace(game,rect,farmId=null){
  return grid(rect)&&!(workerReservations.get(game)||[]).some(w=>overlaps({x:w.x-1,y:w.y-1,w:2,h:2},rect))&&(!game.ship||!overlaps(game.ship,rect))&&![...game.sites,...(reservations.get(game)||[])].some(s=>overlaps(s,rect))&&!game.farms.some(f=>f.id!==farmId&&coverageIntersectsRect(f.coverage,rect));
@@ -161,7 +164,7 @@ export function applyAllotment(world,game,id,coverage){
  const soil=combineCoverage(game.soil,preparedCoverage(farm.work)),remaining=combineCoverage(coverage,soil,true);
  const at=game.jobs.findIndex(j=>j.kind==='farm'&&j.farm===id);
  if(remaining.length&&game.jobs.length-(at>=0?1:0)>=MAX_JOBS)return{error:'Drone queue is full.'};
- if(at===0&&['outbound','preparing'].includes(game.drone.stage))game.drone.stage='returning';
+ if(at>=0&&game.jobs[at].claimant==='drone'){game.drone.stage='returning';}
  if(at>=0)game.jobs.splice(at,1);
  game.soil=soil;farm.coverage=structuredClone(coverage);farm.area=coverageArea(coverage);
  farm.work=remaining.length?{coverage:remaining,area:coverageArea(remaining),progress:0}:null;
@@ -176,10 +179,10 @@ export function advanceConstruction(game, seconds, world) {
   const farmIndex=world && (world.farmCoverage || bindFarms(world,game));
   while (seconds > 1e-8) {
     if (d.stage === 'idle') {
-      if (!game.jobs.length) break;
+      const next=game.jobs.find(j=>!j.claimant&&(j.kind!=='farm'||game.farms.find(f=>f.id===j.farm)?.controller===null||game.sites[game.farms.find(f=>f.id===j.farm)?.controller]?.progress===1));if(!next)break;next.claimant='drone';
       d.stage = 'outbound'; changed = true;
     }
-    const job = game.jobs[0], site = job?.kind === 'build' ? game.sites[job.site] : job?.kind === 'farm' ? farmIndex.fields.get(job.farm).farm : job;
+    const job = droneJob(game), site = job?.kind === 'build' ? game.sites[job.site] : job?.kind === 'farm' ? farmIndex.fields.get(job.farm).farm : job;
     if (d.stage === 'building' || d.stage === 'cutting' || d.stage === 'preparing') {
       const duration = job.kind === 'cut' ? CUT_SECONDS : job.kind === 'farm' ? Math.max(3,site.area/FARM_RATE) : BUILD_SECONDS;
       const before=job.kind==='farm'?Math.floor(site.area*site.progress+1e-7):0;
@@ -192,7 +195,7 @@ export function advanceConstruction(game, seconds, world) {
         if(job.kind==='farm'&&end<1){d.stage='outbound';continue;}
         if (job.kind === 'cut') { const value = world.tile(job.x,job.y); if (value & 8) world.state.setTile(job.x,job.y,value & ~8); }
         else if(job.kind==='build') game.cursor++;
-        game.jobs.shift(); d.stage = 'returning';
+        game.jobs.splice(game.jobs.indexOf(job),1); d.stage = 'returning';
       } else break;
     } else {
       const target = d.stage === 'returning' ? game.ship : job.kind==='farm' ? farmIndex.target(job.farm,Math.floor(site.area*site.progress+1e-7)) : site;
@@ -202,7 +205,7 @@ export function advanceConstruction(game, seconds, world) {
       if (seconds >= needed) {
         d.x = tx; d.y = ty; seconds -= needed; changed = true;
         if (d.stage === 'returning') d.stage = 'idle';
-        else if (job.kind === 'cut' && !world.isTree(job.x,job.y)) { game.jobs.shift(); d.stage = 'returning'; }
+        else if (job.kind === 'cut' && !world.isTree(job.x,job.y)) { game.jobs.splice(game.jobs.indexOf(job),1); d.stage = 'returning'; }
         else d.stage = job.kind === 'cut' ? 'cutting' : job.kind==='farm' ? 'preparing' : 'building';
       } else {
         const t = seconds / needed; d.x += (tx - d.x) * t; d.y += (ty - d.y) * t; changed = true; break;

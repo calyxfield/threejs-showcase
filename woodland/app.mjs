@@ -1,8 +1,8 @@
-import {BALANCE,VILLAGES,CROPS,HIRING,newEconomy,bindEconomy,ensureTowns,farmEconomy,hireWorker,assignWorker,setCrop,restartCrop,advanceEconomy} from './economy.mjs';
+import {BALANCE,VILLAGES,CROPS,HIRING,newEconomy,bindEconomy,ensureTowns,farmEconomy,hireWorker,hiringHome,staffingTarget,laborProductivity,setCrop,restartCrop,advanceEconomy} from './economy.mjs';
 import {brushCoverage,patchCoverage,coverageContains,coverageArea,farmPlacementError,compileCoverage,preparedRow,bindFarms} from './farms.mjs';
 import { World, CHUNK_SIZE, DEFAULTS, hash, CURRENT_GENERATOR } from './world.mjs';
 import { readSaves, writeSave, encodeSave, decodeState } from './saves.mjs';
-import { SHIP, BUILDING, MAX_SITES, MAX_JOBS, hasEditRoom, selectTrees, orderCuts, newConstruction, canPlace, land, placeBuilding, placeController, applyAllotment, controllerCanPlace, advanceConstruction } from './construction.mjs';
+import { SHIP, BUILDING, WORKER_HALL, droneJob, MAX_SITES, MAX_JOBS, hasEditRoom, selectTrees, orderCuts, newConstruction, canPlace, land, placeBuilding, placeController, applyAllotment, controllerCanPlace, advanceConstruction } from './construction.mjs';
 
 const $ = id => document.getElementById(id);
 const canvas = $('world'), ctx = canvas.getContext('2d', { alpha: false });
@@ -17,6 +17,8 @@ const mapView=()=>zoom<MAP_ZOOM;
 let active = null, screen = 'menu', dirty = false, lastSaved = 0, lastChanged = 0;
 let farmDraft = null, farmErase = false, farmPreview = null, farmDraftEntries = [];
 let controllerPlacement = false, selectedFarm = null, farmGesture = 'rectangle', brushSize = 8, brushCursor = null;
+let housePlacement=false,hallPlacement=false;
+const placementSize=()=>hallPlacement?WORKER_HALL:BUILDING;
 let placement = null, cutting = false, selection = null, orderError = '', simulationAt = 0;
 let overviewCells = 0, overviewChunks = 0, overviewBuildMs = 0,overviewBuilds=0,overviewFinePixels=0;
 let world, camera, width = 1, height = 1, zoom = 30, last = 0, drag = null;
@@ -254,11 +256,12 @@ function selectSite(clientX, clientY, pointerType='mouse') {
   if(game.ship&&!placement){
     if(mapView()){const bounds=canvas.getBoundingClientRect(),x=clientX-bounds.left,y=clientY-bounds.top,label=[...mapHits].reverse().find(h=>h.isLabel&&x>=h.x&&x<=h.x+h.w&&y>=h.y&&y<=h.y+h.h);if(label){if(label.kind==='ship')$('view-ship').click();else showEconomy({kind:label.kind,id:label.id});return;}}
     const worker=hitVillager(clientX,clientY,pointerType);if(worker){showVillagers(worker.id);return;}
-    if(mapView()){const bounds=canvas.getBoundingClientRect(),x=clientX-bounds.left,y=clientY-bounds.top,hit=[...mapHits].reverse().find(h=>x>=h.x&&x<=h.x+h.w&&y>=h.y&&y<=h.y+h.h);if(hit){if(hit.kind==='ship')$('view-ship').click();else if(hit.kind==='farm')showEconomy({kind:'farm',id:hit.id});else showEconomy({kind:'town',id:hit.id});return;}}
+    if(mapView()){const bounds=canvas.getBoundingClientRect(),x=clientX-bounds.left,y=clientY-bounds.top,hit=[...mapHits].reverse().find(h=>x>=h.x&&x<=h.x+h.w&&y>=h.y&&y<=h.y+h.h);if(hit){if(hit.kind==='ship')$('view-ship').click();else showEconomy({kind:hit.kind,id:hit.id});return;}}
     const point=mapTile(clientX,clientY),farm=game.farms.find(f=>f.controller!==null&&coverageIntersectsSite(game.sites[f.controller],point))||game.farms.find(f=>f.controller===null&&coverageContains(f.coverage,point.x,point.y));
+    const hall=game.sites.findIndex(s=>s.hall&&coverageIntersectsSite(s,point));if(hall>=0){showEconomy({kind:'hall',id:hall});return;}
     if(farm){if(farm.controller===null)openAllotment(farm.id);else showEconomy({kind:'farm',id:farm.id});return;}const town=world.economy?.towns.find(t=>Math.abs(point.x-t.x-t.w/2)<Math.max(t.w/2,8/zoom)&&Math.abs(point.y-t.y-t.h/2)<Math.max(t.h/2,8/zoom));if(town){showEconomy({kind:'town',id:town.id});return;}return;
   }
-  const bounds = canvas.getBoundingClientRect(), size = game.ship ? BUILDING : SHIP;
+  const bounds = canvas.getBoundingClientRect(), size = game.ship ? placementSize() : SHIP;
   const position = { x: Math.floor(camera.x + (clientX - bounds.left - width / 2) / zoom - size.w / 2), y: Math.floor(camera.y + (clientY - bounds.top - height / 2) / zoom - size.h / 2) };
   if (!game.ship) { game.pending = position; changed(); }
   else placement = position;
@@ -273,7 +276,7 @@ function updateSelection(x,y) {
   updateBuildUI();
 }
 function coverageIntersectsSite(site,p){return p.x>=site.x&&p.y>=site.y&&p.x<site.x+site.w&&p.y<site.y+site.h;}
-function cancelTool() { closeVillagers();economySelection=null;$('economy-panel').hidden=true;farmDraft=null;farmPreview=null;farmDraftEntries=[];controllerPlacement=false;selectedFarm=null;brushCursor=null;orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
+function cancelTool() { hallPlacement=false;housePlacement=false;closeVillagers();economySelection=null;$('economy-panel').hidden=true;farmDraft=null;farmPreview=null;farmDraftEntries=[];controllerPlacement=false;selectedFarm=null;brushCursor=null;orderError = ''; stopDrag(); placement = null; cutting = false; selection = null; canvas.classList.remove('selecting'); updateBuildUI(); }
 function openAllotment(id){
  cancelTool();const f=world.construction.farms.find(f=>f.id===id);selectedFarm=id;farmGesture='rectangle';$('farm-gesture').value='rectangle';
  if(f.controller===null){controllerPlacement=true;placement={x:Math.floor(camera.x-3),y:Math.floor(camera.y-3)};}
@@ -304,14 +307,17 @@ function updateBuildUI() {
   if (!game) return;
   $('farm-modes').hidden=!farmDraft;$('brush-controls').hidden=!farmDraft||farmGesture!=='brush';
   if(farmDraft){$('farm-add').setAttribute('aria-pressed',String(!farmErase));$('farm-erase').setAttribute('aria-pressed',String(farmErase));}
-  const landing = !game.ship, rect = landing ? {...game.pending,...SHIP} : placement ? {...placement,...BUILDING} : null;
+  const landing = !game.ship, rect = landing ? {...game.pending,...SHIP} : placement ? {...placement,...placementSize()} : null;
   const valid = rect && (controllerPlacement?controllerCanPlace(game,rect,selectedFarm):canPlace(game,rect)) && zoom >= 4;
-  $('build-title').textContent = landing ? 'Choose a landing site' : farmDraft ? `Farm ${selectedFarm} allotment` : controllerPlacement ? 'Place farm building' : cutting ? 'Cut trees' : placement ? 'Building blueprint' : 'Drone orders';
-  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : farmDraft ? `${farmGesture==='brush'?'Brush':'Drag boxes'} to allot or erase land. Prepared soil stays brown. Applying restarts unharvested crop work. WASD / arrows pan.` : controllerPlacement ? '6 × 6 tiles. Choose a site, then allot land. Tap the building later to edit.' : cutting ? 'Tap a tree or drag a box, then confirm. Up to 128 trees / 4,096 tiles per order. WASD / arrows pan.' : placement ? '6 × 6 tiles. Tap a site, then place. Build and cut orders share one queue.' : 'Place a building blueprint or mark trees for the ship’s drone.';
+  $('build-title').textContent = landing ? 'Choose a landing site' : farmDraft ? `Farm ${selectedFarm} allotment` : controllerPlacement ? 'Place farm building' : cutting ? 'Cut trees' : placement ? (hallPlacement?'Worker hall blueprint':housePlacement?'House blueprint':'Building blueprint') : 'Construction orders';
+  $('build-help').textContent = landing ? '40 × 12 tiles. Tap the map to choose, then land. Trees under the ship will be cleared.' : farmDraft ? `${farmGesture==='brush'?'Brush':'Drag boxes'} to allot or erase land. Prepared soil stays brown. Applying restarts unharvested crop work. WASD / arrows pan.` : controllerPlacement ? '6 × 6 tiles. Choose a site, then allot land. Tap the building later to edit.' : cutting ? 'Tap a tree or drag a box, then confirm. Up to 128 trees / 4,096 tiles per order. WASD / arrows pan.' : placement ? (hallPlacement?'Wooden level 1 · 15 × 10 tiles · 10 hired workers. Humans report here, then build and cut trees automatically.':housePlacement?'6 × 6 tiles. One villager moves in automatically after construction finishes.':'6 × 6 tiles. Tap a site, then place. Build and cut orders share one queue.') : 'Place blueprints or mark trees. The ship drone and worker halls share the orders.';
   $('confirm-build').hidden = !rect && !cutting && !farmDraft;
   $('confirm-build').textContent = landing ? 'Land here' : farmDraft ? 'Apply allotment' : controllerPlacement ? 'Place farm building' : cutting ? `Order cutting${selection?.trees.length ? ' ('+selection.trees.length+')' : ''}` : 'Place blueprint';
   $('confirm-build').disabled = farmDraft ? !!farmDraft.error || !!farmPlacementError(game,farmDraft.coverage,selectedFarm) : cutting ? !detailView() || !selection?.trees.length || !!selection.error : !valid || (!landing && (game.jobs.length >= MAX_JOBS || game.sites.length >= MAX_SITES));
   $('cancel-build').hidden = !placement && !cutting && !farmDraft;
+  $('start-house').hidden=landing||!!placement||cutting||!!farmDraft;
+  $('start-house').disabled=game.sites.length>=MAX_SITES||game.jobs.length>=MAX_JOBS;
+  $('start-hall').hidden=$('start-house').hidden;$('start-hall').disabled=$('start-house').disabled;
   $('start-build').hidden = landing || !!placement || cutting || !!farmDraft;
   $('start-farm').hidden = landing || !!placement || cutting || !!farmDraft;
   $('start-cut').hidden = landing || !!placement || cutting || !!farmDraft;
@@ -322,7 +328,7 @@ function updateBuildUI() {
   else if (cutting) status = !detailView() ? 'Zoom in to select individual trees.' : selection?.error || (selection ? `${selection.trees.length} ${selection.trees.length === 1 ? 'tree' : 'trees'} marked · ${game.jobs.length} jobs queued` : 'Select trees. Dragging marks an area in this tool.');
   else if (rect) status = zoom < 4 ? 'Zoom in to choose exact tiles.' : valid ? `Site X ${rect.x} · Y ${rect.y}` : 'This footprint overlaps occupied ground.';
   else {
-    const d = game.drone, job = game.jobs[0], queue = game.jobs.length;
+    const d = game.drone, job = droneJob(game), queue = game.jobs.length;
     const progress = job?.kind === 'build' ? game.sites[job.site].progress : job?.kind==='farm' ? world.farmCoverage.fields.get(job.farm).farm.progress : job?.progress;
     status = ['building','cutting','preparing'].includes(d.stage) ? `Drone ${d.stage} ${Math.floor(progress*100)}% · ${queue} remaining` : d.stage === 'outbound' ? `Flying to ${job.kind === 'cut' ? 'tree' : job.kind==='farm' ? 'farm section' : 'blueprint'} · ${queue} remaining` : d.stage === 'returning' ? `Drone returning · ${queue} queued` : `${game.cursor} buildings · ${game.farms.filter(f=>!f.work||f.work.progress===1).length} farms prepared · Drone ready`;
     if (queue >= MAX_JOBS) status += ` · Queue limit ${MAX_JOBS}`;
@@ -332,6 +338,8 @@ function updateBuildUI() {
 $('start-build').addEventListener('click', () => {
   cancelTool(); placement = { x: Math.floor(camera.x - BUILDING.w/2), y: Math.floor(camera.y - BUILDING.h/2) }; updateBuildUI();
 });
+$('start-hall').addEventListener('click',()=>{cancelTool();hallPlacement=true;placement={x:Math.floor(camera.x-WORKER_HALL.w/2),y:Math.floor(camera.y-WORKER_HALL.h/2)};updateBuildUI();});
+$('start-house').addEventListener('click',()=>{cancelTool();housePlacement=true;placement={x:Math.floor(camera.x-3),y:Math.floor(camera.y-3)};updateBuildUI();});
 $('start-cut').addEventListener('click', () => { cancelTool(); cutting = true; canvas.classList.add('selecting'); updateBuildUI(); });
 $('start-farm').addEventListener('click',()=>{cancelTool();controllerPlacement=true;placement={x:Math.floor(camera.x-3),y:Math.floor(camera.y-3)};updateBuildUI();});
 $('farm-add').addEventListener('click',()=>{stopDrag();farmErase=false;updateBuildUI();});
@@ -349,9 +357,9 @@ $('confirm-build').addEventListener('click', () => {
     if (result.error) { selection = {...selection,error:result.error}; updateBuildUI(); return; }
     cancelTool(); changed(); saveCurrent(); return;
   }
-  if (!hasEditRoom(world,game,{...(game.ship ? placement : game.pending),...(game.ship ? BUILDING : SHIP)})) { orderError = 'This world has reached its tree-clearing limit.'; updateBuildUI(); return; }
+  if (!hasEditRoom(world,game,{...(game.ship ? placement : game.pending),...(game.ship ? placementSize() : SHIP)})) { orderError = 'This world has reached its tree-clearing limit.'; updateBuildUI(); return; }
   if(controllerPlacement){const result=placeController(world,game,placement,selectedFarm);if(result.error){orderError=result.error;updateBuildUI();return;}openAllotment(result.farm.id);changed();saveCurrent();return;}
-  const success = game.ship ? placeBuilding(world,game,placement) : land(world,game);
+  const success = game.ship ? placeBuilding(world,game,placement,hallPlacement?'hall':housePlacement) : land(world,game);
   if (success) { ensureTowns(world);cancelTool(); changed(); saveCurrent(); }
 });
 $('view-ship').addEventListener('click', () => {
@@ -428,10 +436,12 @@ function drawConstruction(left, top) {
   }
   if (game.ship) { rectangle(game.ship, '#8c8f92', '#d1d4d5', 1, false, true); drawShipDetails(game.ship, game.drone, left, top); }
   for (const site of game.sites) {
-    rectangle(site,site.farm?'#948169':site.progress===1?'#7e8990':'#98a7ad',site.farm?'#efe0b6':site.progress===1?'#c6d0d3':'#b3e8f3',site.progress);
+    rectangle(site,site.hall?'#87684c':site.house?'#93705a':site.farm?'#948169':site.progress===1?'#7e8990':'#98a7ad',site.farm?'#efe0b6':site.progress===1?'#c6d0d3':'#b3e8f3',site.progress);
+    if(site.hall){const sx=(site.x-left)*zoom,sy=(site.y-top)*zoom,sw=site.w*zoom,sh=site.h*zoom;if(sx+sw>=0&&sx<=width&&sy+sh>=0&&sy<=height){ctx.strokeStyle='#ceab79';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(sx,sy+sh*.5);ctx.lineTo(sx+sw,sy+sh*.5);ctx.stroke();ctx.fillStyle='#443426';ctx.fillRect(sx+sw*.4,sy+sh-zoom,sw*.2,zoom);const count=world.economy.workers.filter(w=>!w.leaving&&w.workplace===`hall:${game.sites.indexOf(site)}`).length;ctx.fillStyle='#fff0ce';ctx.font='11px Arial';ctx.fillText(`Worker hall · L1 · ${count}/10`,sx,sy-6);}}
+    if(site.house&&site.progress===1){const sx=(site.x-left)*zoom,sy=(site.y-top)*zoom,sw=site.w*zoom,sh=site.h*zoom;if(sx+sw>=0&&sx<=width&&sy+sh>=0&&sy<=height){ctx.strokeStyle='#d6b99b';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(sx+sw/2,sy);ctx.lineTo(sx+sw/2,sy+sh);ctx.stroke();ctx.fillStyle='#44352d';ctx.fillRect(sx+sw*.4,sy+sh-zoom*.6,sw*.2,zoom*.6);const resident=world.economy.workers.find(w=>w.home.site===game.sites.indexOf(site));ctx.fillStyle='#fff0ce';ctx.font='11px Arial';ctx.fillText(resident?`Home · ${resident.id}`:'House · vacant',sx,sy-6);if(resident?.id===selectedVillagerId){ctx.strokeStyle='#fff0a4';ctx.lineWidth=2;ctx.strokeRect(sx-2,sy-2,sw+4,sh+4);}}}
     if(site.farm){const sx=(site.x-left)*zoom,sy=(site.y-top)*zoom;if(sx>-60&&sx<width&&sy>-60&&sy<height){ctx.fillStyle='#f5ead2';ctx.font='11px monospace';ctx.fillText(`F${site.farm}`,sx+3,sy+Math.max(13,site.h*zoom/2));if(zoom>=4&&site.progress===1){ctx.strokeStyle='#5a5040';ctx.lineWidth=2;ctx.strokeRect(sx+zoom,sy+zoom,site.w*zoom-2*zoom,site.h*zoom-2*zoom);}}}
   }
-  const ghost = !game.ship ? { ...game.pending, ...SHIP } : placement ? { ...placement, ...BUILDING } : null;
+  const ghost = !game.ship ? { ...game.pending, ...SHIP } : placement ? { ...placement, ...placementSize() } : null;
   if (ghost) { const valid = controllerPlacement?controllerCanPlace(game,ghost,selectedFarm):canPlace(game, ghost); rectangle(ghost, valid ? '#c5e0df55' : '#d3706355', valid ? '#e2f0df' : '#f4a38e', 1, true); }
   function treeMark(tree, color, progress = 0) {
     const sx = (tree.x+.5-left)*zoom, sy = (tree.y+.5-top)*zoom, r = Math.max(4,zoom*.64);
@@ -545,36 +555,36 @@ window.woodland = Object.freeze({
 for (const key of ['scale', 'detail', 'density']) $(key).value = DEFAULTS[key];
 labels();showScreen('menu');requestAnimationFrame(draw);
 
-function refillSelect(node,items){if(!items.length)items=[['',node.id==='worker-farm'?'No farms yet':node.id==='worker-choice'?'No workers yet':'No towns nearby']];const old=node.value;node.replaceChildren(...items.map(([value,label])=>{const option=document.createElement('option');option.value=String(value);option.textContent=label;return option;}));if([...node.options].some(o=>o.value===old))node.value=old;}
-function showEconomy(selection){cancelTool();$('economy-message').textContent='';economySelection=selection;economyListStamp='';$('economy-panel').hidden=false;updateEconomyUI();if(selection.kind==='town')$('town-choice').value=String(selection.id);if(selection.kind==='worker'){selectedVillagerId=selection.id;$('worker-choice').value=String(selection.id);syncWorkerChoice();}if(selection.kind==='farm'){$('worker-farm').value=String(selection.id);$('crop-choice').value=farmEconomy(world,selection.id).crop||'';}updateEconomyUI();}
-function syncWorkerChoice(){const w=world.economy.workers.find(w=>w.id===Number($('worker-choice').value));if(w?.assignment){$('worker-job').value=w.assignment.kind;$('worker-farm').value=String(w.assignment.farm);if(w.assignment.town)$('town-choice').value=String(w.assignment.town);}else $('worker-job').value='idle';}
+function refillSelect(node,items){if(!items.length)items=[['','No towns nearby']];const old=node.value;node.replaceChildren(...items.map(([value,label])=>{const option=document.createElement('option');option.value=String(value);option.textContent=label;return option;}));if([...node.options].some(o=>o.value===old))node.value=old;}
+function showEconomy(selection){cancelTool();$('economy-message').textContent='';economySelection=selection;economyListStamp='';$('economy-panel').hidden=false;updateEconomyUI();if(selection.kind==='town')$('town-choice').value=String(selection.id);if(selection.kind==='hall'){const hall=world.construction.sites[selection.id],town=[...world.economy.towns].sort((a,b)=>Math.hypot(a.x-hall.x,a.y-hall.y)-Math.hypot(b.x-hall.x,b.y-hall.y))[0];if(town)$('town-choice').value=String(town.id);}if(selection.kind==='farm'){$('crop-choice').value=farmEconomy(world,selection.id).crop||'';}updateEconomyUI();}
 function updateEconomyUI(){
  updateVillagersUI();
  const e=world?.economy;$('gold-balance').hidden=!e;if(!e)return;$('gold-balance').textContent=`${e.gold} gold`;
  if(!economySelection)return;
  const farm=economySelection.kind==='farm'?farmEconomy(world,economySelection.id):null;
- $('economy-title').textContent=farm?`Farm ${farm.farm}`:'Towns & workers';$('farm-operations').hidden=!farm;
- const stamp=e.towns.map(t=>t.id).join(',')+'|'+e.workers.map(w=>w.id).join(',')+'|'+world.construction.farms.map(f=>f.id+':'+f.controller).join(',');
- if(stamp!==economyListStamp){refillSelect($('town-choice'),e.towns.map(t=>[t.id,t.name]));refillSelect($('worker-choice'),e.workers.map(w=>[w.id,`Worker ${w.id}`]));refillSelect($('worker-farm'),world.construction.farms.filter(f=>f.controller!==null).map(f=>[f.id,`Farm ${f.id}`]));economyListStamp=stamp;}
- if(farm){const c=farm.cycle,workers=e.workers.filter(w=>w.assignment?.kind==='farm'&&w.assignment.farm===farm.farm);$('farm-economy-status').textContent=`Stored: ${farm.stock.wheat} kg wheat · ${farm.stock.corn} kg corn · ${workers.length} assigned. `+(c?`${CROPS[c.crop].name}: ${c.phase} ${Math.floor((c.phase==='growing'?c.grown/CROPS[c.crop].growSeconds:c.work/c.area)*100)}%`:(farm.crop?'Waiting for a worker and prepared land.':'Choose a crop, then assign a worker.'));}
- const town=e.towns.find(t=>t.id===Number($('town-choice').value));if(economySelection.kind==='town'&&town)$('economy-title').textContent=`${town.name} · hiring`;$('town-prices').textContent=town?`${town.name} buys wheat ${CROPS.wheat.price} gold/kg · corn ${CROPS.corn.price} gold/kg`:'';$('hire-worker').textContent=`Hire · ${HIRING.wage} gold/month`;$('hire-worker').disabled=!town||e.gold<HIRING.wage||e.workers.length>=BALANCE.maxWorkers;
- const w=e.workers.find(w=>w.id===Number($('worker-choice').value));$('payroll-policy').textContent=`Month ${Math.floor(e.clock/HIRING.period)+1} · 1 game month = ${HIRING.period} seconds. Workers allow ${HIRING.graceMonths} unpaid months, then leave; missed wages are forgiven.`;$('departure-notice').textContent=e.lastDeparture;$('departure-notice').hidden=!e.lastDeparture;$('worker-state').textContent=w?`Worker ${w.id}: ${w.leaving?'Leaving after three unpaid months · '+w.note:w.note}${w.unpaid&&!w.leaving?' · unpaid grace: '+Math.max(0,Math.ceil((w.paidUntil+(HIRING.graceMonths-w.missedMonths)*HIRING.period-e.clock)))+' seconds until departure':''}${w.cargo?' · carrying '+w.cargo.kg+' kg '+w.cargo.crop:''}${!$('worker-farm').value?' · Build a farm first, then assign this worker':''}.`:`No workers yet. Hire at a town; the first month's wages are paid now.`;$('assign-worker').disabled=!w||w.leaving||($('worker-job').value!=='idle'&&!$('worker-farm').value);
+ $('economy-title').textContent=farm?`Farm ${farm.farm}`:'Towns';$('farm-operations').hidden=!farm;
+ const stamp=e.towns.map(t=>t.id).join(',');
+ if(stamp!==economyListStamp){refillSelect($('town-choice'),e.towns.map(t=>[t.id,t.name]));economyListStamp=stamp;}
+ if(farm){const c=farm.cycle,workers=e.workers.filter(w=>w.workplace===farm.farm&&!w.leaving),base=staffingTarget(world.construction.farms.find(f=>f.id===farm.farm)),productive=workers.filter(w=>w.phase==='farm'&&w.assignment?.kind==='farm').length,carriers=workers.filter(w=>w.assignment?.kind==='delivery').length,level=laborProductivity(productive,base);$('farm-economy-status').textContent=`${workers.length}/${base} assigned / base workers · ${productive} producing · ${carriers} delivering · Production level ${(level*100).toFixed(0)}%. Stored: ${farm.stock.wheat} kg wheat · ${farm.stock.corn} kg corn. `+(c?`${CROPS[c.crop].name}: ${c.phase} ${Math.floor((c.phase==='growing'?c.grown/CROPS[c.crop].growSeconds:c.work/c.area)*100)}%. `:(farm.crop?'Waiting for workers, completed building and prepared land. ':'Choose a crop. '))+`The crop cycle runs at ${level.toFixed(2)}× its full-base-staffing rate. Travel and full storage pause production.`;}
+ const hall=economySelection.kind==='hall'?world.construction.sites[economySelection.id]:null;$('hall-operations').hidden=!hall;if(hall){const workers=e.workers.filter(w=>!w.leaving&&w.workplace===`hall:${economySelection.id}`),working=workers.filter(w=>world.construction.jobs.some(j=>j.claimant===`worker:${w.id}`)).length;$('economy-title').textContent=`Worker hall ${economySelection.id+1} · level 1`;$('hall-status').textContent=hall.progress<1?`Under construction · ${Math.floor(hall.progress*100)}%. Ten workplace slots open when complete.`:`${workers.length}/10 workers assigned · ${working} on construction or cutting jobs. Hired villagers report here automatically and go home when no work is reachable. Each worker works at a fixed rate.`;}
+
+ const town=e.towns.find(t=>t.id===Number($('town-choice').value));if(economySelection.kind==='town'&&town)$('economy-title').textContent=`${town.name} · hiring`;$('town-prices').textContent=town?`${town.name} buys wheat ${CROPS.wheat.price} gold/kg · corn ${CROPS.corn.price} gold/kg`:'';$('hire-worker').textContent=`Hire · ${HIRING.wage} gold/month`;$('hire-worker').disabled=!town||e.gold<HIRING.wage||e.workers.length>=BALANCE.maxWorkers||!hiringHome(world,town?.id);$('hire-worker').title=town&&!hiringHome(world,town.id)?'No vacant home. Build a house before hiring here.':'';if(town&&!hiringHome(world,town.id))$('town-prices').textContent+=' · No vacant home. Build a house to hire here.';
+ $('payroll-policy').textContent=`Month ${Math.floor(e.clock/HIRING.period)+1} · 1 game month = ${HIRING.period} seconds. Workers allow ${HIRING.graceMonths} unpaid months, then leave; missed wages are forgiven.`;$('departure-notice').textContent=e.lastDeparture;$('departure-notice').hidden=!e.lastDeparture;
 }
 $('open-trade').addEventListener('click',()=>showEconomy({kind:'overview'}));$('close-economy').addEventListener('click',()=>{economySelection=null;$('economy-panel').hidden=true;});
-$('worker-choice').addEventListener('change',()=>{selectedVillagerId=Number($('worker-choice').value)||null;$('economy-message').textContent='';syncWorkerChoice();updateEconomyUI();});$('town-choice').addEventListener('change',()=>{$('economy-message').textContent='';updateEconomyUI();});$('worker-job').addEventListener('change',updateEconomyUI);
-$('hire-worker').addEventListener('click',()=>{const r=hireWorker(world,Number($('town-choice').value));$('economy-message').textContent=r.error||`Worker hired in ${world.economy.towns.find(t=>t.id===r.worker.homeTown).name}. Choose their repeating job.`;if(r.worker){economyListStamp='';updateEconomyUI();$('worker-choice').value=String(r.worker.id);selectedVillagerId=r.worker.id;$('worker-job').value=economySelection?.kind==='farm'?'farm':'idle';changed();saveCurrent();}updateEconomyUI();});
-$('assign-worker').addEventListener('click',()=>{const kind=$('worker-job').value,a=kind==='idle'?null:{kind,farm:Number($('worker-farm').value),...(kind==='delivery'?{town:Number($('town-choice').value)}:{})};const r=assignWorker(world,Number($('worker-choice').value),a);$('economy-message').textContent=r.error||(a?'Job assigned. The worker will repeat it automatically.':'Unassigned. Any carried harvest returns to its farm first.');changed();saveCurrent();updateEconomyUI();});
+$('town-choice').addEventListener('change',()=>{$('economy-message').textContent='';updateEconomyUI();});
+$('hire-worker').addEventListener('click',()=>{const r=hireWorker(world,Number($('town-choice').value));$('economy-message').textContent=r.error||`Villager hired in ${world.economy.towns.find(t=>t.id===r.worker.homeTown).name}. Nearby work and deliveries are automatic.`;if(r.worker){selectedVillagerId=r.worker.id;changed();saveCurrent();}updateEconomyUI();});
 $('apply-crop').addEventListener('click',()=>{if(economySelection?.kind!=='farm')return;setCrop(world,economySelection.id,$('crop-choice').value||null);$('economy-message').textContent='Crop choice saved. Unharvested work restarts; stored harvest stays.';changed();saveCurrent();updateEconomyUI();});
 $('edit-farm-land').addEventListener('click',()=>{const id=economySelection.id;openAllotment(id);});
 $('view-town').addEventListener('click',()=>{const t=world.economy.towns.find(t=>t.id===Number($('town-choice').value));if(t){economySelection=null;$('economy-panel').hidden=true;const toolbarHeight=document.querySelector('.toolbar').getBoundingClientRect().height;setZoom(Math.min(10,width/(t.w+24),Math.max(60,height-toolbarHeight-36)/(t.h+24)));camera={x:t.x+t.w/2,y:t.y+t.h/2-toolbarHeight/(2*zoom)};changed();}});
 function drawEconomy(left,top){const e=world.economy;if(!e)return;
  for(const t of e.towns){const x=(t.x-left)*zoom,y=(t.y-top)*zoom,w=t.w*zoom,h=t.h*zoom;if(x+w<0||y+h<0||x>width||y>height)continue;
   if(zoom>=2){const large=t.layout===VILLAGES.layout;ctx.fillStyle='#b6a37c77';ctx.fillRect(x+(large?19.5:7.5)*zoom,y,(large?1.5:3)*zoom,h);ctx.fillRect(x,y+(large?9.1:6)*zoom,w,(large?1.4:2)*zoom);
-   for(let i=0;i<(large?VILLAGES.houses:6);i++){const columns=large?5:3,col=i%columns,row=Math.floor(i/columns),v=((world.seed>>>0)+t.id*13+i*7)%3,hx=x+(large?4+col*9+(v-1)*.5:1+col*5.5)*zoom,hy=y+(large?3+row*8:1+row*7)*zoom,rw=(large?5:4)*zoom,rh=(large?4.5+v*.25:3.5+v*.25)*zoom;ctx.fillStyle='#d0baa0';ctx.fillRect(hx,hy,rw,rh+zoom*.6);ctx.fillStyle=['#765445','#87705a','#67645a'][v];ctx.fillRect(hx-zoom*.25,hy-zoom*.2,rw+zoom*.5,rh);ctx.strokeStyle='#baa285';ctx.lineWidth=Math.max(1,zoom*.12);ctx.beginPath();ctx.moveTo(hx+rw/2,hy);ctx.lineTo(hx+rw/2,hy+rh);ctx.stroke();ctx.fillStyle='#463d32';ctx.fillRect(hx+rw*.4,hy+rh,zoom*.8,zoom*.6);}
+   for(let i=0;i<(large?VILLAGES.houses:6);i++){const columns=large?5:3,col=i%columns,row=Math.floor(i/columns),v=((world.seed>>>0)+t.id*13+i*7)%3,hx=x+(large?4+col*9+(v-1)*.5:1+col*5.5)*zoom,hy=y+(large?3+row*8:1+row*7)*zoom,rw=(large?5:4)*zoom,rh=(large?4.5+v*.25:3.5+v*.25)*zoom;ctx.fillStyle='#d0baa0';ctx.fillRect(hx,hy,rw,rh+zoom*.6);ctx.fillStyle=['#765445','#87705a','#67645a'][v];ctx.fillRect(hx-zoom*.25,hy-zoom*.2,rw+zoom*.5,rh);ctx.strokeStyle='#baa285';ctx.lineWidth=Math.max(1,zoom*.12);ctx.beginPath();ctx.moveTo(hx+rw/2,hy);ctx.lineTo(hx+rw/2,hy+rh);ctx.stroke();ctx.fillStyle='#463d32';ctx.fillRect(hx+rw*.4,hy+rh,zoom*.8,zoom*.6);const resident=e.workers.find(w=>w.id===selectedVillagerId&&w.home.town===t.id&&w.home.house===i);if(resident){ctx.strokeStyle='#fff0a4';ctx.lineWidth=2;ctx.strokeRect(hx-2,hy-2,rw+4,rh+zoom*.6+4);ctx.fillStyle='#fff0a4';ctx.font='11px Arial';ctx.fillText(`Home · ${resident.id}`,hx,hy-6);}}
   }else{ctx.fillStyle='#c9b18b';ctx.fillRect(x,y,Math.max(12,w),Math.max(10,h));ctx.strokeStyle='#f2dfb9';ctx.lineWidth=1.5;ctx.strokeRect(x,y,Math.max(12,w),Math.max(10,h));}
   ctx.fillStyle='#fff1cf';ctx.font='12px Arial';ctx.fillText(t.name,x,y-6);
  }
- const selected=selectedVillagerId??(economySelection?Number($('worker-choice').value):null);for(const w of e.workers){const x=(w.x-left)*zoom,y=(w.y-top)*zoom;if(selected===w.id&&w.path.length){ctx.strokeStyle='#f0cf7866';ctx.lineWidth=1.5;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(x,y);for(const p of w.path.slice(w.step))ctx.lineTo((p.x-left)*zoom,(p.y-top)*zoom);ctx.stroke();ctx.setLineDash([]);}if(x<-30||y<-30||x>width+30||y>height+30)continue;const size=Math.max(4,Math.min(8,zoom*.5));ctx.fillStyle=w.unpaid?'#df8970':'#f5e2a3';ctx.strokeStyle='#40392a';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x,y,size,0,Math.PI*2);ctx.fill();ctx.stroke();if(w.assignment?.kind==='delivery'||w.cargo){ctx.fillStyle=w.cargo?'#d8a454':'#837655';ctx.fillRect(x+size+2,y-size,Math.max(8,size*2),size*2);ctx.strokeRect(x+size+2,y-size,Math.max(8,size*2),size*2);if(w.cargo){ctx.fillStyle='#fff3ca';ctx.font='10px Arial';ctx.fillText(`${w.cargo.kg} kg`,x-5,y-size-5);}}ctx.fillStyle='#fff5da';ctx.font='10px Arial';if(selected===w.id)drawVillagerSelection(w,x,y,size);}
+ const selected=selectedVillagerId;for(const w of e.workers){const x=(w.x-left)*zoom,y=(w.y-top)*zoom;if(selected===w.id&&w.path.length){ctx.strokeStyle='#f0cf7866';ctx.lineWidth=1.5;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(x,y);for(const p of w.path.slice(w.step))ctx.lineTo((p.x-left)*zoom,(p.y-top)*zoom);ctx.stroke();ctx.setLineDash([]);}if(x<-30||y<-30||x>width+30||y>height+30)continue;const size=Math.max(4,Math.min(8,zoom*.5));ctx.fillStyle=w.unpaid?'#df8970':'#f5e2a3';ctx.strokeStyle='#40392a';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x,y,size,0,Math.PI*2);ctx.fill();ctx.stroke();if(w.assignment?.kind==='delivery'||w.cargo){ctx.fillStyle=w.cargo?'#d8a454':'#837655';ctx.fillRect(x+size+2,y-size,Math.max(8,size*2),size*2);ctx.strokeRect(x+size+2,y-size,Math.max(8,size*2),size*2);if(w.cargo){ctx.fillStyle='#fff3ca';ctx.font='10px Arial';ctx.fillText(`${w.cargo.kg} kg`,x-5,y-size-5);}}ctx.fillStyle='#fff5da';ctx.font='10px Arial';if(selected===w.id)drawVillagerSelection(w,x,y,size);}
  for(const f of e.farms){const site=world.construction.sites[world.construction.farms.find(g=>g.id===f.farm)?.controller];if(!site||site.progress<1||!f.crop)continue;const x=(site.x-left)*zoom,y=(site.y-top)*zoom;if(x<0||y<0||x>width||y>height)continue;ctx.fillStyle='#f1d780';ctx.font='11px Arial';ctx.fillText(CROPS[f.crop].name,x,y+site.h*zoom+14);}
 }
 
@@ -582,7 +592,7 @@ function boxesOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h
 function mapLineHits(a,b,r){let lo=0,hi=1;for(const axis of ['x','y']){const d=b[axis]-a[axis],min=r[axis]-2,max=r[axis]+r[axis==='x'?'w':'h']+2;if(Math.abs(d)<1e-9){if(a[axis]<min||a[axis]>max)return false;continue;}let u=(min-a[axis])/d,v=(max-a[axis])/d;if(u>v)[u,v]=[v,u];lo=Math.max(lo,u);hi=Math.min(hi,v);if(lo>=hi)return false;}return hi>0&&lo<1;}
 function drawMapSymbols(left,top){
  mapHits=[];const game=world.construction;if(!game)return;
- const symbols=[...(game.ship?[{kind:'ship',id:0,rect:game.ship,label:'Ship',color:'#d3d8d4'}]:[]),...game.farms.filter(f=>f.controller!==null).map(f=>({kind:'farm',id:f.id,rect:game.sites[f.controller],label:`Farm ${f.id}`,color:'#c49b66'})),...(world.economy?.towns||[]).map(t=>({kind:'town',id:t.id,rect:t,label:t.name,color:'#f2d992'}))];
+ const symbols=[...(game.ship?[{kind:'ship',id:0,rect:game.ship,label:'Ship',color:'#d3d8d4'}]:[]),...game.sites.flatMap((site,id)=>site.hall?[{kind:'hall',id,rect:site,label:`Worker hall ${id+1}`,color:'#ba9467'}]:[]),...game.farms.filter(f=>f.controller!==null).map(f=>({kind:'farm',id:f.id,rect:game.sites[f.controller],label:`Farm ${f.id}`,color:'#c49b66'})),...(world.economy?.towns||[]).map(t=>({kind:'town',id:t.id,rect:t,label:t.name,color:'#f2d992'}))];
  const markers=symbols.map(s=>({x:(s.rect.x+s.rect.w/2-left)*zoom-9,y:(s.rect.y+s.rect.h/2-top)*zoom-9,w:18,h:18})),labels=[];ctx.font='12px Arial';
  for(const symbol of symbols){const r=symbol.rect,x=(r.x+r.w/2-left)*zoom,y=(r.y+r.h/2-top)*zoom;if(x<-30||y<-30||x>width+30||y>height+30)continue;
   ctx.fillStyle=symbol.color;ctx.strokeStyle='#293d32';ctx.lineWidth=2;ctx.beginPath();if(symbol.kind==='town')ctx.arc(x,y,7,0,Math.PI*2);else if(symbol.kind==='ship'){ctx.moveTo(x,y-8);ctx.lineTo(x+8,y);ctx.lineTo(x,y+8);ctx.lineTo(x-8,y);ctx.closePath();}else ctx.rect(x-6,y-6,12,12);ctx.fill();ctx.stroke();
@@ -613,7 +623,8 @@ function showVillagers(id=selectedVillagerId){
 }
 function villagerJob(w){
   const a=w.assignment;
-  if(!a)return 'Unassigned';
+  if(!a)return 'Waiting for nearby work';
+  if(a.kind==='hall')return `Worker hall ${a.site+1}`;
   if(a.kind==='farm')return `Farm ${a.farm}`;
   const town=world.economy.towns.find(t=>t.id===a.town);
   return `Deliver · Farm ${a.farm} → ${town?.name||'town'}`;
@@ -657,9 +668,10 @@ function updateVillagersUI(){
   $('villager-gone').hidden=!!w||noSelection;
   $('villager-facts').hidden=!w;
   $('view-villager').disabled=!w;
-  $('assign-villager').disabled=!w||w.leaving;
+  $('view-villager-home').disabled=!w;$('view-villager-home').textContent=w?.home.awaiting?'Go to village':'Go to home';
   $('villager-origin').textContent=w?`Hired in ${e.towns.find(t=>t.id===w.homeTown)?.name||'a village'}`:'';
   if(!w)return;
+  $('villager-home').textContent=w.home.awaiting?'Awaiting a house':w.home.site!==undefined?`House ${w.home.site+1} · your settlement`:`House ${w.home.house+1} · ${e.towns.find(t=>t.id===w.home.town)?.name||'village'}`;
   $('villager-job').textContent=villagerJob(w);
   $('villager-activity').textContent=w.leaving?`Leaving · ${w.note}`:w.note;
   $('villager-cargo').textContent=w.cargo?`${w.cargo.kg} kg ${CROPS[w.cargo.crop].name.toLowerCase()} from Farm ${w.cargo.farm}`:'Empty';
@@ -695,7 +707,10 @@ $('view-villager').addEventListener('click',()=>{
   setZoom(Math.min(16,width/35));
   camera={x:w.x,y:w.y-toolbarHeight/(2*zoom)};changed();canvas.focus({preventScroll:true});
 });
-$('assign-villager').addEventListener('click',()=>{
-  const w=world.economy.workers.find(w=>w.id===selectedVillagerId);if(!w||w.leaving)return;
-  showEconomy({kind:'worker',id:w.id});$('worker-job').focus();
+$('view-villager-home').addEventListener('click',()=>{
+  const w=world.economy.workers.find(w=>w.id===selectedVillagerId);if(!w)return;
+  closeVillagers();economySelection=null;$('economy-panel').hidden=true;
+  const toolbarHeight=document.querySelector('.toolbar').getBoundingClientRect().height;
+  setZoom(Math.min(16,width/32,Math.max(60,height-toolbarHeight-36)/24));
+  camera={x:w.home.x,y:w.home.y-3-toolbarHeight/(2*zoom)};changed();
 });
