@@ -8,6 +8,8 @@ const chart = $('chart'), cx = chart.getContext('2d');
 const colors = ['#7cd6ef', '#f8bf73'];
 let paused = false, lastFrame = null, accumulator = 0, scale = null, width = 0, height = 0;
 let history = [], lastSample = -1, speed = 1;
+const energy0=sim.energy();
+let activeSamples=null;
 function fitCanvas(c) {
   const r = c.getBoundingClientRect(), d = Math.min(window.devicePixelRatio || 1, 2);
   if (c.width !== Math.round(r.width*d) || c.height !== Math.round(r.height*d)) {
@@ -27,12 +29,36 @@ function delayChanged(value) {
 $('delay').addEventListener('input', e => delayChanged(e.target.value));
 document.querySelectorAll('[data-delay]').forEach(b => b.addEventListener('click', () => delayChanged(b.dataset.delay)));
 $('pause').addEventListener('click', () => {paused=!paused; updateStatus();});
-$('reset').addEventListener('click', () => {
-  sim.reset(); history=[]; lastSample=-1; accumulator=0; scale=null;
+function resetView() {
+  history=[]; lastSample=-1; accumulator=0; scale=null;
   $('error').hidden=true; record(); render(); updateStatus();
-});
+}
+function resetOrbit(){sim.reset();resetView();}
+$('reset').addEventListener('click',resetOrbit);
+$('errorReset').addEventListener('click',resetOrbit);
+function showError(e) {
+  paused=true;$('error').hidden=false;$('errorText').textContent=e.message;updateStatus();
+}
+document.querySelectorAll('input[name="mode"]').forEach(input=>input.addEventListener('change',()=>{
+  if(!input.checked)return;
+  sim.setMode(input.value);
+  const propagation=sim.mode==='propagation';
+  $('fixedControls').hidden=propagation;$('propagationControls').hidden=!propagation;$('travelReadout').hidden=!propagation;
+  $('controlsHelp').textContent=propagation?'Delay follows signal travel time. Change c live; Reset restarts the orbit.':'The slider changes the force live. Reset restarts the orbit with your selected delay.';
+  resetView();
+}));
+function propagationChanged(c){
+  sim.setPropagationSpeed(c);
+  $('propagationSpeed').value=String(100*Math.log(c/2)/Math.log(50));
+  $('propagationValue').innerHTML=c.toFixed(1)+' <small>units/s</small>';
+  $('propagationSpeed').setAttribute('aria-valuetext',c.toFixed(2)+' distance units per simulated second');
+  document.querySelectorAll('[data-speed]').forEach(b=>b.setAttribute('aria-pressed',String(Math.abs(Number(b.dataset.speed)-c)<1e-9)));
+  $('error').hidden=true;render();
+}
+$('propagationSpeed').addEventListener('input',e=>propagationChanged(2*Math.pow(50,Number(e.target.value)/100)));
+document.querySelectorAll('[data-speed]').forEach(b=>b.addEventListener('click',()=>propagationChanged(Number(b.dataset.speed))));
 $('speed').addEventListener('change', e => {speed=Number(e.target.value); accumulator=0;});
-['ghosts','forces','trails'].forEach(id => $(id).addEventListener('change',render));
+['ghosts','forces','trails','velocity'].forEach(id => $(id).addEventListener('change',render));
 function updateStatus() {
   $('pause').textContent=paused?'Resume':'Pause';
   $('status').textContent=paused?'Ⅱ PAUSED':'● RUNNING';
@@ -57,7 +83,8 @@ function drawPlot() {
   [width,height]=fitCanvas(canvas);
   if(!width||!height)return;
   ctx.clearRect(0,0,width,height);
-  const past=sim.pastPositions();
+  const past=activeSamples?[activeSamples[1].position,activeSamples[0].position]:sim.positions;
+  const hasDelay=activeSamples&&activeSamples.some(x=>x.delay>1e-8);
   let extent=1.35;
   const envelope=p=>{extent=Math.max(extent,Math.abs(p[0]),Math.abs(p[1]));};
   sim.positions.forEach(envelope); if($('ghosts').checked)past.forEach(envelope);
@@ -84,18 +111,29 @@ function drawPlot() {
       }
     }ctx.globalAlpha=1;
   }
-  if($('forces').checked){
+  if($('forces').checked && activeSamples){
     sim.positions.forEach((p,i)=>{
       const [x,y]=world(p),[tx,ty]=world(past[1-i]),dist=Math.hypot(tx-x,ty-y);
       if(dist<1)return;
       const dx=(tx-x)/dist,dy=(ty-y)/dist,len=Math.min(62,dist*.55);
       ctx.globalAlpha=.5;ctx.strokeStyle='#e5ece1';ctx.lineWidth=1.3;ctx.beginPath();ctx.moveTo(x+dx*14,y+dy*14);ctx.lineTo(x+dx*len,y+dy*len);ctx.stroke();
       ctx.beginPath();ctx.moveTo(x+dx*len,y+dy*len);ctx.lineTo(x+dx*(len-6)-dy*3,y+dy*(len-6)+dx*3);ctx.lineTo(x+dx*(len-6)+dy*3,y+dy*(len-6)-dx*3);ctx.closePath();ctx.fillStyle='#e5ece1';ctx.fill();ctx.globalAlpha=1;
-      if(sim.delay>0 && $('ghosts').checked){ctx.globalAlpha=.16;ctx.setLineDash([3,5]);ctx.beginPath();ctx.moveTo(x+dx*len,y+dy*len);ctx.lineTo(tx,ty);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;}
+      if(hasDelay && $('ghosts').checked){ctx.globalAlpha=.16;ctx.setLineDash([3,5]);ctx.beginPath();ctx.moveTo(x+dx*len,y+dy*len);ctx.lineTo(tx,ty);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;}
     });
   }
-  if($('ghosts').checked && sim.delay>0){
+  if($('ghosts').checked && hasDelay){
     past.forEach((p,i)=>{const[x,y]=world(p);ctx.globalAlpha=.7;circle(x,y,10,colors[i],null,1.4);circle(x,y,2,null,colors[i]);ctx.globalAlpha=1;});
+  }
+  if($('velocity').checked){
+    const multiplier=Math.min(scale*.8,85/Math.max(.001,...sim.velocities.map(v=>Math.hypot(...v))));
+    sim.positions.forEach((p,i)=>{
+      const[x,y]=world(p),v=sim.velocities[i],vx=v[0]*multiplier,vy=-v[1]*multiplier,l=Math.hypot(vx,vy);
+      if(l<10)return;
+      const dx=vx/l,dy=vy/l;
+      ctx.strokeStyle=colors[i];ctx.fillStyle=colors[i];ctx.globalAlpha=.9;ctx.lineWidth=1.6;
+      ctx.beginPath();ctx.moveTo(x+dx*10,y+dy*10);ctx.lineTo(x+vx,y+vy);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(x+vx,y+vy);ctx.lineTo(x+vx-dx*7-dy*3.5,y+vy-dy*7+dx*3.5);ctx.lineTo(x+vx-dx*7+dy*3.5,y+vy-dy*7-dx*3.5);ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+    });
   }
   sim.positions.forEach((p,i)=>{
     const[x,y]=world(p);const glow=ctx.createRadialGradient(x,y,1,x,y,27);glow.addColorStop(0,colors[i]+'35');glow.addColorStop(1,colors[i]+'00');circle(x,y,27,null,glow);
@@ -113,13 +151,21 @@ function drawChart() {
   history.forEach((s,i)=>{const px=(s.t-start)/span*w,py=y(s.s);if(i===0)cx.moveTo(px,py);else cx.lineTo(px,py);});cx.stroke();
   cx.fillStyle='#637567';cx.font='9px ui-monospace,monospace';cx.fillText('1×',3,Math.max(9,y(1)-3));
 }
-function render(){drawPlot();drawChart();$('time').textContent=sim.t.toFixed(2);$('separation').textContent=(Math.hypot(sim.positions[0][0]-sim.positions[1][0],sim.positions[0][1]-sim.positions[1][1])/2).toFixed(3);}
+function signed(x){return (x>=0?'+':'−')+Math.abs(x).toFixed(3);}
+function render(){
+  try{activeSamples=sim.forceSamples();}catch(e){activeSamples=null;showError(e);}
+  drawPlot();drawChart();$('time').textContent=sim.t.toFixed(2);
+  $('separation').textContent=(Math.hypot(sim.positions[0][0]-sim.positions[1][0],sim.positions[0][1]-sim.positions[1][1])/2).toFixed(3);
+  $('energyChange').textContent=signed((sim.energy()-energy0)/Math.abs(energy0));
+  $('velocityA').textContent=sim.velocities[0].map(signed).join(', ');$('velocityB').textContent=sim.velocities[1].map(signed).join(', ');
+  $('travelDelays').textContent=activeSamples?activeSamples.map(s=>s.delay.toFixed(3)+' s').join(' / '):'—';
+}
 function tick(now) {
   const elapsed=lastFrame===null?0:Math.min(.1,(now-lastFrame)/1000);lastFrame=now;
   if(!paused){
     accumulator+=elapsed*speed;
     try{while(accumulator>=sim.dt){sim.step();accumulator-=sim.dt;record();}}
-    catch(e){paused=true;$('error').hidden=false;updateStatus();console.error(e);}
+    catch(e){showError(e);}
   }
   render();requestAnimationFrame(tick);
 }

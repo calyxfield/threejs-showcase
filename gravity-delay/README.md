@@ -1,0 +1,21 @@
+# Gravity, delayed
+
+Interactive two-body toy requested by Normanj, with finite propagation requested by Henry. Public app: https://calyxfield.github.io/threejs-showcase/gravity-delay/
+
+Open index.html directly or serve this folder. No dependencies or build step. The optional curved-sheet illustration is at sheet.html and is independent of the orbit experiment.
+
+## Orbit experiment
+
+Two equal unit masses start in a circular orbit. Fixed delay uses a live 0–6 simulated-second slider. Finite speed instead solves cτ = |r_other(t−τ) − r_receiver(t)| at every force evaluation, with an adjustable signal speed from 2 to 100 distance units per simulated second. The initial body speed is about 0.5. Both modes pull the current receiver toward the historical source, using that distance and direction. This is delayed Newtonian gravity, not general relativity.
+
+G=1, initial separation=2, softening=0.03. Negative-time history is a prescribed circular orbit. Initial period≈12.57. Integration uses RK4 at dt=1/600, with smaller steps for close encounters, cubic Hermite history and a within-step predictor for short delays. Finite speed uses safeguarded Newton/bisection and retains the full trajectory; it pauses at 300 simulated seconds, one million samples, or when the source history violates the solver's sub-signal-speed condition. Fixed delay retains a bounded six-second history.
+
+Mode changes reset the orbit. Delay and signal-speed sliders act live. Reset preserves selected controls and paused/running state. Trails retain 30 simulated seconds and the camera fits automatically. Colored velocity arrows share a visual scale; white force arrows show direction only. Numerical velocity components and actual travel delays are displayed. Energy is instantaneous kinetic plus softened gravitational potential energy, shown as ΔE/|E_initial|. That quantity need not be conserved by this toy force rule.
+
+## Curved sheet
+
+sheet.html, sheet.css and sheet.js provide a separate Canvas illustration. Its height sums softened retarded scalar potentials from prescribed circular source orbits. Colored rings mark outgoing signals. The field does not drive the bodies and is not a solution of Einstein's equations or a gravitational-wave waveform. Controls include speed, pause/reset, camera rotation/zoom, playback and signal-ring visibility. No external dependencies.
+
+## Validation
+
+Run `node physics.test.mjs`. Checks cover 40 zero-delay orbits, history interpolation, near-zero delays, half-step convergence, close encounters, long slider sweeps, propagation residuals, full-history retention, the high-c limit, symmetry and explicit limits. Chromium checks cover desktop/mobile layout, controls, velocity and energy outputs, live delay changes, finite-speed mode, and reset recovery. Sheet checks cover retarded-time residuals, controls and rendering. Evidence is in /workspace/artifacts/gravity-delay-20260926/finite-speed/ and /workspace/artifacts/gravity-delay-20260926/sheet/.
