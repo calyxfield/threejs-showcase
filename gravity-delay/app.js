@@ -170,6 +170,7 @@ function render(){
   drawPlot();drawChart();$('time').textContent=sim.t.toFixed(2);
   $('separation').textContent=(Math.hypot(sim.positions[0][0]-sim.positions[1][0],sim.positions[0][1]-sim.positions[1][1])/2).toFixed(3);
   $('energyChange').textContent=signed((sim.energy()-energy0)/Math.abs(energy0));
+  $('speedA').textContent=Math.hypot(...sim.velocities[0]).toFixed(3);$('speedB').textContent=Math.hypot(...sim.velocities[1]).toFixed(3);
   $('velocityA').textContent=sim.velocities[0].map(signed).join(', ');$('velocityB').textContent=sim.velocities[1].map(signed).join(', ');
   $('travelDelays').textContent=activeSamples?activeSamples.map(s=>s.delay.toFixed(3)+' s').join(' / '):'—';
 }
