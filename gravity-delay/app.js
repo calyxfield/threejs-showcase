@@ -57,6 +57,19 @@ function propagationChanged(c){
 }
 $('propagationSpeed').addEventListener('input',e=>propagationChanged(2*Math.pow(50,Number(e.target.value)/100)));
 document.querySelectorAll('[data-speed]').forEach(b=>b.addEventListener('click',()=>propagationChanged(Number(b.dataset.speed))));
+const minTimeStep=1/2400,maxTimeStep=.05,defaultTimeStep=1/600;
+function updateTimeStepControl(){
+  $('timeStep').value=String(100*Math.log(sim.dt/minTimeStep)/Math.log(maxTimeStep/minTimeStep));
+  $('timeStepValue').textContent=sim.dt.toFixed(6)+' s';
+  $('timeStep').setAttribute('aria-valuetext',sim.dt.toFixed(6)+' simulated seconds maximum step');
+}
+function timeStepChanged(dt){
+  if(dt===sim.dt)return;
+  sim.setTimeStep(dt);updateTimeStepControl();resetView();
+}
+$('timeStep').addEventListener('input',e=>timeStepChanged(Math.min(maxTimeStep,Math.max(minTimeStep,minTimeStep*Math.pow(maxTimeStep/minTimeStep,Number(e.target.value)/100)))));
+$('defaultStep').addEventListener('click',()=>timeStepChanged(defaultTimeStep));
+updateTimeStepControl();
 $('speed').addEventListener('change', e => {speed=Number(e.target.value); accumulator=0;});
 ['ghosts','forces','trails','velocity'].forEach(id => $(id).addEventListener('change',render));
 function updateStatus() {

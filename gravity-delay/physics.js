@@ -28,11 +28,15 @@
   const SOFTENING = 0.03;
   const OMEGA = Math.sqrt(2 / Math.pow(4 + SOFTENING * SOFTENING, 1.5));
 
+  function validateTimeStep(dt) {
+    if (!Number.isFinite(dt) || dt < 0.00001 || dt > 0.05) {
+      throw new RangeError('dt must be between 0.00001 and 0.05 seconds');
+    }
+  }
+
   class GravitySimulation {
     constructor({ dt = 1 / 600, delay = 0, mode = 'fixed', propagationSpeed = 2 } = {}) {
-      if (!Number.isFinite(dt) || dt < 0.00001 || dt > 0.05) {
-        throw new RangeError('dt must be between 0.00001 and 0.05 seconds');
-      }
+      validateTimeStep(dt);
       this.dt = dt;
       this.period = 2 * Math.PI / OMEGA;
       this.softening = SOFTENING;
@@ -53,6 +57,17 @@
     setDelay(seconds) {
       if (!Number.isFinite(seconds)) throw new RangeError('Delay must be finite');
       this.delay = Math.max(0, Math.min(MAX_DELAY, seconds));
+      return this;
+    }
+
+    // The selected dt is a maximum step; close encounters may use smaller ones.
+    // Changing it restarts the orbit and history while retaining force controls.
+    setTimeStep(dt) {
+      validateTimeStep(dt);
+      if (dt !== this.dt) {
+        this.dt = dt;
+        this.reset();
+      }
       return this;
     }
 
@@ -87,6 +102,7 @@
       this._state = [-1, 0, 1, 0, 0, -OMEGA, 0, OMEGA];
       this.positions = [[-1, 0], [1, 0]];
       this.velocities = [[0, -OMEGA], [0, OMEGA]];
+      this._minStep = Math.min(this.dt / 64, 1 / 40000);
       this._capacity = Math.ceil(MAX_DELAY / this.dt) + 4;
       this._history = new Float64Array(this._capacity * 8);
       this._times = new Float64Array(this._capacity);

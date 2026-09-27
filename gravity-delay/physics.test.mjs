@@ -218,4 +218,79 @@ const report = (name, value) => console.log(`${name}: ${value}`);
   report('Propagation duration, source-speed, sample-count limits', 'passed');
 }
 
+// A changed maximum step rebuilds the orbit and history without losing force
+// controls. An unchanged or invalid value leaves the running state untouched.
+{
+  const sim = new GravitySimulation({ mode: 'propagation', delay: 1.7, propagationSpeed: 7 });
+  sim.step(600);
+  const before = state(sim);
+  const history = sim._history;
+  assert.equal(sim.setTimeStep(sim.dt), sim);
+  assert.equal(sim.t, 1);
+  assert.equal(sim._history, history);
+  for (const dt of [NaN, Infinity, 0, 0.000009, 0.050001, '0.01']) {
+    assert.throws(() => sim.setTimeStep(dt), RangeError);
+    assert.throws(() => new GravitySimulation({ dt }), RangeError);
+    assert.equal(sim.t, 1);
+    assert.deepEqual(state(sim), before);
+    assert.equal(sim._history, history);
+  }
+  for (const dt of [0.05, 1 / 2400]) {
+    assert.equal(sim.setTimeStep(dt), sim);
+    assert.equal(sim.t, 0);
+    assert.equal(sim.dt, dt);
+    assert.equal(sim.mode, 'propagation');
+    assert.equal(sim.delay, 1.7);
+    assert.equal(sim.propagationSpeed, 7);
+    assert.equal(sim._length, 1);
+    assert.deepEqual(sim.positions, [[-1, 0], [1, 0]]);
+    const fresh = new GravitySimulation({ dt, mode: 'propagation', delay: 1.7, propagationSpeed: 7 });
+    sim.step(Math.round(8 / dt));
+    fresh.step(Math.round(8 / dt));
+    assert.deepEqual(state(sim), state(fresh));
+    assert.deepEqual(sim.forceSamples(), fresh.forceSamples());
+    assert.deepEqual(sim.pastPositions(6), fresh.pastPositions(6));
+  }
+  sim.setMode('fixed').setDelay(6);
+  for (const dt of [0.05, 1 / 2400]) {
+    sim.setTimeStep(dt);
+    const fresh = new GravitySimulation({ dt, delay: 6 });
+    sim.step(Math.round(8 / dt));
+    fresh.step(Math.round(8 / dt));
+    assert.deepEqual(state(sim), state(fresh));
+    assert.deepEqual(sim.pastPositions(6), fresh.pastPositions(6));
+    assert(sim._length <= sim.maxHistorySamples);
+  }
+  report('Time-step validation, no-op, reset, retained controls and rebuilt history', 'passed');
+}
+
+// Coarse slider settings are deliberately observable numerical approximations.
+// Check actual convergence against the fine UI endpoint, especially the hardest
+// fixed-delay trajectory, rather than asserting mere finiteness at coarse dt.
+{
+  for (const mode of ['fixed', 'propagation']) {
+    const run = dt => new GravitySimulation({ mode, delay: 6, propagationSpeed: 2 })
+      .setTimeStep(dt).step(Math.round(20 / dt));
+    const fine = run(1 / 2400);
+    const steps = [0.05, 0.025, 0.0125];
+    const errors = steps.map(dt => {
+      const sim = run(dt);
+      assert(state(sim).every(Number.isFinite));
+      assert(Math.abs(sim.positions[0][0] + sim.positions[1][0]) < 1e-12);
+      assert(Math.abs(sim.positions[0][1] + sim.positions[1][1]) < 1e-12);
+      if (mode === 'propagation') {
+        for (const [receiver, sample] of sim.forceSamples().entries()) {
+          assert(Math.abs(2 * sample.delay - distance(sample.position, sim.positions[receiver])) < 1e-9);
+        }
+      }
+      return distance(state(sim), state(fine));
+    });
+    const minimumImprovement = mode === 'fixed' ? 10 : 4;
+    assert(errors[0] > minimumImprovement * errors[1]);
+    assert(errors[1] > minimumImprovement * errors[2]);
+    assert(errors[2] < (mode === 'fixed' ? 0.05 : 1e-8));
+    report(`${mode} t20 errors at maximum steps .05 / .025 / .0125 versus 1/2400`, errors.join(' / '));
+  }
+}
+
 console.log('All numerical checks passed.');
