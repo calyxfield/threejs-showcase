@@ -125,7 +125,7 @@ function drawPlot() {
     past.forEach((p,i)=>{const[x,y]=world(p);ctx.globalAlpha=.7;circle(x,y,10,colors[i],null,1.4);circle(x,y,2,null,colors[i]);ctx.globalAlpha=1;});
   }
   if($('velocity').checked){
-    const multiplier=Math.min(scale*.8,85/Math.max(.001,...sim.velocities.map(v=>Math.hypot(...v))));
+    const multiplier=Math.min(100,85/Math.max(.001,...sim.velocities.map(v=>Math.hypot(...v))));
     sim.positions.forEach((p,i)=>{
       const[x,y]=world(p),v=sim.velocities[i],vx=v[0]*multiplier,vy=-v[1]*multiplier,l=Math.hypot(vx,vy);
       if(l<10)return;
